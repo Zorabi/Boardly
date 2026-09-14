@@ -59,6 +59,69 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertTrue(store.tasks.isEmpty)
     }
 
+    func testMoveTaskToEmptyColumnAppendsToDestination() {
+        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
+        let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
+        let store = BoardStore(tasks: [first, second])
+
+        // 拖放到空列（如 Backlog）：moveTask 无 before，应追加到列尾。
+        store.moveTask(id: second.id, to: .backlog)
+
+        XCTAssertEqual(store.task(withID: second.id)?.status, .backlog)
+        XCTAssertEqual(store.task(withID: second.id)?.sortOrder, 0)
+        // 源列在移出后重新归一化，剩余顺序保持稳定。
+        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [first.id])
+        XCTAssertEqual(store.task(withID: first.id)?.sortOrder, 0)
+    }
+
+    func testMoveTaskBeforeDestinationInDifferentColumn() {
+        let mover = BoardTask(title: "Mover", status: .todo, sortOrder: 0)
+        let doneFirst = BoardTask(title: "Done First", status: .done, sortOrder: 0)
+        let doneSecond = BoardTask(title: "Done Second", status: .done, sortOrder: 1)
+        let store = BoardStore(tasks: [mover, doneFirst, doneSecond])
+
+        // 跨列拖放到“Done Second”卡片上方：应插入到它之前。
+        store.moveTask(id: mover.id, to: .done, before: doneSecond.id)
+
+        XCTAssertEqual(store.tasks(in: .done).map(\.id), [doneFirst.id, mover.id, doneSecond.id])
+        XCTAssertTrue(store.tasks(in: .todo).isEmpty)
+    }
+
+    func testMoveTaskAppendAfterLastKeepsColumnStable() {
+        let first = BoardTask(title: "First", status: .inProgress, sortOrder: 3)
+        let second = BoardTask(title: "Second", status: .inProgress, sortOrder: 7)
+        let store = BoardStore(tasks: [first, second])
+
+        // 列级落点（列尾）对已经是最后一张的卡片不应改变顺序。
+        store.moveTask(id: second.id, to: .inProgress)
+
+        XCTAssertEqual(store.tasks(in: .inProgress).map(\.id), [first.id, second.id])
+        XCTAssertEqual(store.tasks(in: .inProgress).map(\.sortOrder), [0, 1])
+    }
+
+    func testMoveTaskBackAndForthBetweenColumnsPreservesOtherTasks() {
+        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
+        let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
+        let traveler = BoardTask(title: "Traveler", status: .todo, sortOrder: 2)
+        let store = BoardStore(tasks: [first, second, traveler])
+
+        store.moveTask(id: traveler.id, to: .backlog)
+        store.moveTask(id: traveler.id, to: .todo, before: first.id)
+
+        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [traveler.id, first.id, second.id])
+        XCTAssertEqual(store.tasks(in: .todo).map(\.sortOrder), [0, 1, 2])
+        XCTAssertTrue(store.tasks(in: .backlog).isEmpty)
+    }
+
+    func testTaskCountExcludesCompletedTasks() {
+        let project = Project(name: "Project", symbol: "folder", colorName: "blue")
+        let active = BoardTask(title: "Active", status: .todo, projectID: project.id)
+        let completed = BoardTask(title: "Completed", status: .done, projectID: project.id)
+        let store = BoardStore(projects: [project], tasks: [active, completed])
+
+        XCTAssertEqual(store.taskCount(in: project.id), 1)
+    }
+
     func testProjectLifecycleAndTaskRecovery() {
         let store = BoardStore()
         let projectID = try! XCTUnwrap(store.addProject(name: "  新项目  ", symbol: "folder", colorName: "violet"))
