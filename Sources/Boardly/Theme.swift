@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 
 enum BoardlyTheme {
     /// 应用内拖放任务卡片使用的唯一传输类型；onDrag 与 onDrop 必须同时使用它。
-    static let taskDragType = UTType("com.boardly.task")!
+    /// 使用 exportedAs（非可选、自带声明），避免 UTType(_:) 在无类型声明的
+    /// SwiftPM 可执行环境中返回 nil 导致启动崩溃。
+    static let taskDragType = UTType(exportedAs: "com.boardly.task")
 
     static let accent = Color(red: 117 / 255, green: 103 / 255, blue: 248 / 255)
     static let accentPressed = Color(red: 104 / 255, green: 91 / 255, blue: 226 / 255)

@@ -3,6 +3,37 @@ import XCTest
 
 @MainActor
 final class BoardStoreTests: XCTestCase {
+    func testTaskDragTypeIsDeclaredWithoutForceUnwrap() {
+        // 回归守卫：拖放类型必须以非可选方式声明；如果声明方式退化回
+        // UTType(_:)! 且返回 nil，模块初始化会直接崩溃并使本测试无法运行。
+        XCTAssertEqual(BoardlyTheme.taskDragType.identifier, "com.boardly.task")
+        XCTAssertFalse(BoardlyTheme.taskDragType.identifier.isEmpty)
+    }
+
+    func testTaskDragPayloadRoundTripsTaskIDThroughProvider() async throws {
+        let task = BoardTask(title: "Drag me", status: .todo)
+        let provider = TaskDragPayload.makeProvider(taskID: task.id)
+
+        XCTAssertTrue(provider.hasItemConformingToTypeIdentifier(BoardlyTheme.taskDragType.identifier))
+
+        let decoded = try await TaskDragPayload.decodeTaskID(from: provider)
+        XCTAssertEqual(decoded, task.id)
+    }
+
+    func testTaskDragPayloadRejectsNonUUIDData() async throws {
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(
+            forTypeIdentifier: BoardlyTheme.taskDragType.identifier,
+            visibility: .all
+        ) { completion in
+            completion("not-a-uuid".data(using: .utf8), nil)
+            return nil
+        }
+
+        let decoded = try await TaskDragPayload.decodeTaskID(from: provider)
+        XCTAssertNil(decoded)
+    }
+
     func testMoveTaskChangesStatusAndAppendsToDestination() {
         let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
         let second = BoardTask(title: "Second", status: .done, sortOrder: 4)

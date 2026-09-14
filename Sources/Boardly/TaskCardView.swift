@@ -61,10 +61,7 @@ struct TaskCardView: View {
         .onTapGesture { store.selectedTaskID = task.id }
         .onHover { isHovering = $0 }
         .onDrag {
-            NSItemProvider(
-                item: task.id.uuidString as NSString,
-                typeIdentifier: BoardlyTheme.taskDragType.identifier
-            )
+            TaskDragPayload.makeProvider(taskID: task.id)
         }
         // 拖到卡片上方：插入到这张卡片之前，实现列内重排。
         .onDrop(of: [BoardlyTheme.taskDragType], isTargeted: $isDropTarget) { providers in
@@ -184,6 +181,40 @@ struct TaskCardView: View {
     }
 }
 
+// MARK: - 拖放载荷
+
+/// 任务卡片拖放载荷：编码契约固定为任务 ID 字符串的 UTF-8 `Data`，
+/// 注册与读取必须成对使用这里的 helper，禁止绕过契约直接包装 NSString。
+enum TaskDragPayload {
+    static func makeProvider(taskID: BoardTask.ID) -> NSItemProvider {
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(
+            forTypeIdentifier: BoardlyTheme.taskDragType.identifier,
+            visibility: .all
+        ) { completion in
+            completion(taskID.uuidString.data(using: .utf8), nil)
+            return nil
+        }
+        return provider
+    }
+
+    static func decodeTaskID(from provider: NSItemProvider) async throws -> BoardTask.ID? {
+        let data: Data = try await withCheckedThrowingContinuation { continuation in
+            provider.loadDataRepresentation(
+                forTypeIdentifier: BoardlyTheme.taskDragType.identifier
+            ) { data, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: data ?? Data())
+                }
+            }
+        }
+        guard let string = String(data: data, encoding: .utf8) else { return nil }
+        return UUID(uuidString: string)
+    }
+}
+
 // MARK: - 拖放解析
 
 /// 列与卡片共用的拖放落地逻辑：解析任务 ID 后在主线程应用移动。
@@ -200,15 +231,10 @@ enum TaskDropHandler {
             return false
         }
 
-        let store = store
-        provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
-            guard let data,
-                  let idString = String(data: data, encoding: .utf8),
-                  let taskID = UUID(uuidString: idString),
+        Task { @MainActor in
+            guard let taskID = try? await TaskDragPayload.decodeTaskID(from: provider),
                   taskID != destinationID else { return }
-            Task { @MainActor in
-                store.moveTask(id: taskID, to: status, before: destinationID)
-            }
+            store.moveTask(id: taskID, to: status, before: destinationID)
         }
         return true
     }
