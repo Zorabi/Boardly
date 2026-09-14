@@ -4,23 +4,31 @@ struct BoardWorkspaceView: View {
     @EnvironmentObject private var store: BoardStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var searchText = ""
-    @State private var isPresentingNewTask = false
+    @State private var newTaskContext: NewTaskContext?
     @State private var isInspectorPresented = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    /// 携带目标状态的新建任务上下文：从工具栏进入默认“待办”，从列头进入则预填该列状态。
+    struct NewTaskContext: Identifiable {
+        let status: TaskStatus
+        var id: String { status.rawValue }
+    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
-            BoardView(searchText: searchText, onCreateTask: { isPresentingNewTask = true })
-                .navigationTitle(store.selectedScopeTitle)
+            BoardView(searchText: searchText) { status in
+                newTaskContext = NewTaskContext(status: status)
+            }
+            .navigationTitle(store.selectedScopeTitle)
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "搜索任务")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    isPresentingNewTask = true
+                    newTaskContext = NewTaskContext(status: .todo)
                 } label: {
                     Label("新建任务", systemImage: "plus")
                 }
@@ -28,30 +36,43 @@ struct BoardWorkspaceView: View {
                 .help("新建任务 (⌘N)")
 
                 Button {
-                    isInspectorPresented.toggle()
+                    toggleInspector()
                 } label: {
                     Label("任务详情", systemImage: "sidebar.right")
                 }
                 .disabled(store.selectedTaskID == nil)
-                .help("显示或隐藏任务详情")
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help("显示或隐藏任务详情 (⌥⌘I)")
             }
         }
         .inspector(isPresented: $isInspectorPresented) {
             inspectorContent
                 .inspectorColumnWidth(min: 280, ideal: 320, max: 420)
         }
-        .sheet(isPresented: $isPresentingNewTask) {
-            NewTaskSheet()
+        .sheet(item: $newTaskContext) { context in
+            NewTaskSheet(initialStatus: context.status)
                 .environmentObject(store)
         }
         .onChange(of: store.selectedTaskID) { _, selectedTaskID in
             guard selectedTaskID != nil else { return }
-            if reduceMotion {
+            presentInspector()
+        }
+    }
+
+    private func toggleInspector() {
+        if isInspectorPresented {
+            isInspectorPresented = false
+        } else {
+            presentInspector()
+        }
+    }
+
+    private func presentInspector() {
+        if reduceMotion {
+            isInspectorPresented = true
+        } else {
+            withAnimation(.easeOut(duration: 0.2)) {
                 isInspectorPresented = true
-            } else {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    isInspectorPresented = true
-                }
             }
         }
     }

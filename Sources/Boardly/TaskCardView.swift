@@ -1,68 +1,130 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TaskCardView: View {
     @EnvironmentObject private var store: BoardStore
     let task: BoardTask
+
     @State private var isHovering = false
+    @State private var isDropTarget = false
 
     private var isSelected: Bool { store.selectedTaskID == task.id }
 
     var body: some View {
-        Button {
-            store.selectedTaskID = task.id
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                projectLabel
+        VStack(alignment: .leading, spacing: 8) {
+            headerRow
 
-                Text(task.title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
+            Text(task.title)
+                .font(.body.weight(.medium))
+                .foregroundStyle(task.status == .done ? Color.secondary : Color.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !task.notes.isEmpty {
+                Text(task.notes)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if !task.notes.isEmpty {
-                    Text(task.notes)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(3)
-                        .multilineTextAlignment(.leading)
-                }
-
-                metadata
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(
-                isSelected
-                    ? BoardlyTheme.selectedCard
-                    : (isHovering ? BoardlyTheme.cardHover : BoardlyTheme.card)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? BoardlyTheme.selectedBorder : BoardlyTheme.border, lineWidth: isSelected ? 2 : 1)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            metadata
         }
-        .buttonStyle(.plain)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isSelected
+                ? BoardlyTheme.selectedCard
+                : (isHovering ? BoardlyTheme.cardHover : BoardlyTheme.card)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous)
+                .strokeBorder(
+                    isDropTarget
+                        ? BoardlyTheme.selectedBorder
+                        : (isSelected ? BoardlyTheme.selectedBorder.opacity(0.7) : BoardlyTheme.border),
+                    lineWidth: isDropTarget ? 2 : 1
+                )
+        }
+        .overlay(alignment: .top) {
+            if isDropTarget {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(BoardlyTheme.accent)
+                    .frame(height: 3)
+                    .padding(.horizontal, 10)
+                    .padding(.top, -2)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous))
+        .onTapGesture { store.selectedTaskID = task.id }
         .onHover { isHovering = $0 }
         .onDrag {
-            NSItemProvider(object: task.id.uuidString as NSString)
+            NSItemProvider(
+                item: task.id.uuidString as NSString,
+                typeIdentifier: BoardlyTheme.taskDragType.identifier
+            )
         }
-        .contextMenu {
-            Menu("移动到") {
-                ForEach(TaskStatus.allCases) { status in
-                    Button {
-                        store.moveTask(id: task.id, to: status)
-                    } label: {
-                        Label(status.title, systemImage: status.systemImage)
-                    }
-                    .disabled(status == task.status)
+        // 拖到卡片上方：插入到这张卡片之前，实现列内重排。
+        .onDrop(of: [BoardlyTheme.taskDragType], isTargeted: $isDropTarget) { providers in
+            TaskDropHandler.apply(
+                providers,
+                store: store,
+                to: task.status,
+                before: task.id
+            )
+        }
+        .contextMenu { moveMenuItems }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilitySummary)
+        .accessibilityHint("点按打开详情。可拖放到其他列，或使用移动菜单调整状态。")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { store.selectedTaskID = task.id }
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: 6) {
+            projectLabel
+            Spacer(minLength: 6)
+            moveMenu
+        }
+    }
+
+    /// 无需拖放的状态移动菜单：满足键盘、VoiceOver 与触控板之外的可靠退路。
+    private var moveMenu: some View {
+        Menu {
+            moveMenuItems
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 20)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .accessibilityLabel("移动任务菜单")
+        .accessibilityHint("打开后可将任务移动到任意状态，无需拖放。")
+    }
+
+    @ViewBuilder
+    private var moveMenuItems: some View {
+        Section("移动到") {
+            ForEach(TaskStatus.allCases) { status in
+                Button {
+                    store.moveTask(id: task.id, to: status)
+                } label: {
+                    Label(status.title, systemImage: status.systemImage)
                 }
+                .disabled(status == task.status)
             }
         }
-        .accessibilityLabel(accessibilitySummary)
-        .accessibilityHint("按下以打开详情。也可拖放到其他列，或使用菜单移动。")
+        Button(role: .destructive) {
+            store.deleteTask(id: task.id)
+        } label: {
+            Label("删除任务", systemImage: "trash")
+        }
     }
 
     @ViewBuilder
@@ -94,10 +156,14 @@ struct TaskCardView: View {
                 } icon: {
                     Image(systemName: "calendar")
                 }
-                .foregroundStyle(Calendar.current.isDateInToday(dueDate) ? BoardlyTheme.accent : Color.secondary)
+                .foregroundStyle(
+                    Calendar.current.isDateInToday(dueDate) || (dueDate < .now && task.status != .done)
+                        ? BoardlyTheme.statusColor(.inProgress)
+                        : Color.secondary
+                )
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
             if !task.tags.isEmpty {
                 Image(systemName: "tag")
@@ -115,5 +181,35 @@ struct TaskCardView: View {
             parts.append("截止日期：\(dueDate.formatted(date: .long, time: .omitted))")
         }
         return parts.joined(separator: "，")
+    }
+}
+
+// MARK: - 拖放解析
+
+/// 列与卡片共用的拖放落地逻辑：解析任务 ID 后在主线程应用移动。
+enum TaskDropHandler {
+    @MainActor
+    static func apply(
+        _ providers: [NSItemProvider],
+        store: BoardStore,
+        to status: TaskStatus,
+        before destinationID: BoardTask.ID?
+    ) -> Bool {
+        let identifier = BoardlyTheme.taskDragType.identifier
+        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(identifier) }) else {
+            return false
+        }
+
+        let store = store
+        provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
+            guard let data,
+                  let idString = String(data: data, encoding: .utf8),
+                  let taskID = UUID(uuidString: idString),
+                  taskID != destinationID else { return }
+            Task { @MainActor in
+                store.moveTask(id: taskID, to: status, before: destinationID)
+            }
+        }
+        return true
     }
 }

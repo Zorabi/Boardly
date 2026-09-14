@@ -1,10 +1,9 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct BoardView: View {
     @EnvironmentObject private var store: BoardStore
     let searchText: String
-    let onCreateTask: () -> Void
+    let onCreateTask: (TaskStatus) -> Void
 
     private var visibleTaskCount: Int {
         TaskStatus.allCases.reduce(0) { result, status in
@@ -13,10 +12,7 @@ struct BoardView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            boardHeader
-            Divider()
-
+        Group {
             if visibleTaskCount == 0, !searchText.isEmpty {
                 ContentUnavailableView.search(text: searchText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -24,8 +20,8 @@ struct BoardView: View {
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 12) {
                         ForEach(TaskStatus.allCases) { status in
-                            TaskColumnView(status: status, searchText: searchText)
-                                .frame(width: 286)
+                            TaskColumnView(status: status, searchText: searchText, onCreateTask: onCreateTask)
+                                .frame(width: 280)
                                 .containerRelativeFrame(.vertical)
                         }
                     }
@@ -36,37 +32,13 @@ struct BoardView: View {
             }
         }
     }
-
-    private var boardHeader: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(store.selectedScopeTitle)
-                    .font(.title2.weight(.semibold))
-                    .lineLimit(1)
-                Text("\(visibleTaskCount) 个任务 · 拖放卡片即可更新状态")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 12)
-
-            Button(action: onCreateTask) {
-                Label("添加任务", systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .accessibilityHint("打开新建任务表单")
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(.bar)
-    }
 }
 
 private struct TaskColumnView: View {
     @EnvironmentObject private var store: BoardStore
     let status: TaskStatus
     let searchText: String
+    let onCreateTask: (TaskStatus) -> Void
     @State private var isDropTarget = false
 
     private var tasks: [BoardTask] {
@@ -75,25 +47,12 @@ private struct TaskColumnView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: status.systemImage)
-                    .foregroundStyle(BoardlyTheme.statusColor(status))
-                Text(status.title)
-                    .font(.headline)
-                Text(tasks.count, format: .number)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.quaternary, in: Capsule())
-                Spacer()
-            }
-            .padding(12)
-
+            columnHeader
             Divider()
+                .overlay(BoardlyTheme.border)
 
             ScrollView {
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: 8) {
                     if tasks.isEmpty {
                         emptyState
                     } else {
@@ -106,39 +65,71 @@ private struct TaskColumnView: View {
             }
         }
         .background(BoardlyTheme.column)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(isDropTarget ? BoardlyTheme.accent : BoardlyTheme.border, lineWidth: isDropTarget ? 2 : 1)
+            RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous)
+                .strokeBorder(
+                    isDropTarget ? BoardlyTheme.selectedBorder : BoardlyTheme.border,
+                    lineWidth: isDropTarget ? 2 : 1
+                )
         }
-        .onDrop(of: [UTType.plainText], isTargeted: $isDropTarget) { providers in
-            guard let provider = providers.first else { return false }
-            provider.loadObject(ofClass: NSString.self) { value, _ in
-                guard let taskID = UUID(uuidString: value as? String ?? "") else { return }
-                Task { @MainActor in
-                    store.moveTask(id: taskID, to: status)
-                }
-            }
-            return true
+        // 列级落点：追加到列尾；空列同样生效。列内精确位置由卡片上的 onDrop 处理。
+        .onDrop(of: [BoardlyTheme.taskDragType], isTargeted: $isDropTarget) { providers in
+            TaskDropHandler.apply(providers, store: store, to: status, before: nil)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(status.title)列，\(tasks.count)个任务")
     }
 
+    private var columnHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: status.systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(BoardlyTheme.statusColor(status))
+            Text(status.title)
+                .font(.subheadline.weight(.semibold))
+            Text(tasks.count, format: .number)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Color.white.opacity(0.06), in: Capsule())
+
+            Spacer(minLength: 4)
+
+            Button {
+                onCreateTask(status)
+            } label: {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(BoardlyIconButtonStyle())
+            .help("在“\(status.title)”列新建任务")
+            .accessibilityLabel("在\(status.title)列新建任务")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: status.systemImage)
-                .font(.title2)
-                .foregroundStyle(.tertiary)
             Text("暂无任务")
-                .font(.subheadline.weight(.medium))
-            Text("将卡片拖到这里，或从任务菜单移动。")
-                .font(.caption)
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
+            Text("拖放卡片到这里，或点按右上角 + 新建。")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
+            Button {
+                onCreateTask(status)
+            } label: {
+                Label("新建任务", systemImage: "plus")
+                    .font(.caption.weight(.medium))
+            }
+            .buttonStyle(BoardlySecondaryButtonStyle())
+            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 30)
+        .padding(.vertical, 26)
         .accessibilityElement(children: .combine)
     }
 }
