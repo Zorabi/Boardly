@@ -73,9 +73,11 @@ private struct TaskColumnView: View {
                     lineWidth: isDropTarget ? 2 : 1
                 )
         }
-        // 列级落点：追加到列尾；空列同样生效。列内精确位置由卡片上的 onDrop 处理。
-        .onDrop(of: [BoardlyTheme.taskDragType], isTargeted: $isDropTarget) { providers in
-            TaskDropHandler.apply(providers, store: store, to: status, before: nil)
+        // 列级落点：追加到列尾；空列同样生效。列内精确位置由卡片上的 dropDestination 处理。
+        .dropDestination(for: TaskDragPayload.self) { payloads, _ in
+            TaskDropHandler.handle(payloads, store: store, to: status, before: nil)
+        } isTargeted: { targeted in
+            isDropTarget = targeted
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(status.title)列，\(tasks.count)个任务")

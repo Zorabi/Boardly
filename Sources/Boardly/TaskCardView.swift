@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct TaskCardView: View {
     @EnvironmentObject private var store: BoardStore
@@ -60,32 +59,46 @@ struct TaskCardView: View {
         .contentShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous))
         .onTapGesture { store.selectedTaskID = task.id }
         .onHover { isHovering = $0 }
-        .onDrag {
-            TaskDragPayload.makeProvider(taskID: task.id)
-        }
+        // 类型安全拖放：Transferable 载荷经 CodableRepresentation 编码为 com.boardly.task，
+        // 与所有 dropDestination 的解码端使用同一类型，杜绝传输类型不一致。
+        .draggable(TaskDragPayload(taskID: task.id))
         // 拖到卡片上方：插入到这张卡片之前，实现列内重排。
-        .onDrop(of: [BoardlyTheme.taskDragType], isTargeted: $isDropTarget) { providers in
-            TaskDropHandler.apply(
-                providers,
+        .dropDestination(for: TaskDragPayload.self) { payloads, _ in
+            TaskDropHandler.handle(
+                payloads,
                 store: store,
                 to: task.status,
                 before: task.id
             )
+        } isTargeted: { targeted in
+            isDropTarget = targeted
         }
+        .help("拖动卡片可移动到其他列或调整顺序；点按查看详情")
         .contextMenu { moveMenuItems }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
-        .accessibilityHint("点按打开详情。可拖放到其他列，或使用移动菜单调整状态。")
+        .accessibilityHint("点按打开详情。可从卡片任意区域拖动（左上角抓取指示），或使用移动菜单调整状态。")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { store.selectedTaskID = task.id }
     }
 
     private var headerRow: some View {
         HStack(spacing: 6) {
+            dragGrip
             projectLabel
             Spacer(minLength: 6)
             moveMenu
         }
+    }
+
+    /// 克制的拖动 affordance：悬停或选中时在卡片左上角浮现抓取指示，
+    /// 与右上角 ellipsis 菜单分居两端，互不重叠。
+    private var dragGrip: some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .opacity(isHovering || isSelected ? 1 : 0)
+            .accessibilityHidden(true)
     }
 
     /// 无需拖放的状态移动菜单：满足键盘、VoiceOver 与触控板之外的可靠退路。
@@ -183,59 +196,33 @@ struct TaskCardView: View {
 
 // MARK: - 拖放载荷
 
-/// 任务卡片拖放载荷：编码契约固定为任务 ID 字符串的 UTF-8 `Data`，
-/// 注册与读取必须成对使用这里的 helper，禁止绕过契约直接包装 NSString。
-enum TaskDragPayload {
-    static func makeProvider(taskID: BoardTask.ID) -> NSItemProvider {
-        let provider = NSItemProvider()
-        provider.registerDataRepresentation(
-            forTypeIdentifier: BoardlyTheme.taskDragType.identifier,
-            visibility: .all
-        ) { completion in
-            completion(taskID.uuidString.data(using: .utf8), nil)
-            return nil
-        }
-        return provider
-    }
+/// 任务卡片拖放载荷：macOS 14 类型安全 Transferable，经 CodableRepresentation
+/// 以稳定 JSON 编码写入 com.boardly.task；拖出与落点两侧由系统保证类型一致。
+struct TaskDragPayload: Codable, Hashable, Transferable, Sendable {
+    let taskID: BoardTask.ID
 
-    static func decodeTaskID(from provider: NSItemProvider) async throws -> BoardTask.ID? {
-        let data: Data = try await withCheckedThrowingContinuation { continuation in
-            provider.loadDataRepresentation(
-                forTypeIdentifier: BoardlyTheme.taskDragType.identifier
-            ) { data, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: data ?? Data())
-                }
-            }
-        }
-        guard let string = String(data: data, encoding: .utf8) else { return nil }
-        return UUID(uuidString: string)
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: BoardlyTheme.taskDragType)
     }
 }
 
 // MARK: - 拖放解析
 
-/// 列与卡片共用的拖放落地逻辑：解析任务 ID 后在主线程应用移动。
+/// 卡片与列共用的 drop action 抽象：解码后的载荷在此同步应用移动，
+/// 不依赖 UI 状态，可被单元测试直接调用验证 store.moveTask 行为。
+@MainActor
 enum TaskDropHandler {
-    @MainActor
-    static func apply(
-        _ providers: [NSItemProvider],
+    /// 返回是否接受本次拖放；拖到自身卡片上返回 false（无操作）。
+    static func handle(
+        _ payloads: [TaskDragPayload],
         store: BoardStore,
         to status: TaskStatus,
         before destinationID: BoardTask.ID?
     ) -> Bool {
-        let identifier = BoardlyTheme.taskDragType.identifier
-        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(identifier) }) else {
+        guard let payload = payloads.first, payload.taskID != destinationID else {
             return false
         }
-
-        Task { @MainActor in
-            guard let taskID = try? await TaskDragPayload.decodeTaskID(from: provider),
-                  taskID != destinationID else { return }
-            store.moveTask(id: taskID, to: status, before: destinationID)
-        }
+        store.moveTask(id: payload.taskID, to: status, before: destinationID)
         return true
     }
 }
