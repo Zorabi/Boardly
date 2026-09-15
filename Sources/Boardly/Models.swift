@@ -107,7 +107,7 @@ enum SidebarScope: Hashable, Sendable {
 
     var title: String {
         switch self {
-        case .inbox: "收件箱"
+        case .inbox: "未分类"
         case .today: "今天"
         case .all: "所有任务"
         case .project: "项目"

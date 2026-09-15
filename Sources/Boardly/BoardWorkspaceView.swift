@@ -1,5 +1,29 @@
 import SwiftUI
 
+/// 窗口级 chrome 配置：标题栏透明化并以 Theme 的 toolbar 语义表面作为窗口背景，
+/// 与 SwiftUI 的 toolbarBackground 着色互为兜底，消除默认浅灰标题条。
+/// 交通灯、窗口拖动、工具栏按钮与搜索框全部保留原生行为。
+struct BoardlyWindowChrome: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        configureWindow(of: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        configureWindow(of: nsView)
+    }
+
+    private func configureWindow(of view: NSView) {
+        // makeNSView 时视图尚未挂到窗口，等待下一个主循环再配置。
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+            window.titlebarAppearsTransparent = true
+            window.backgroundColor = BoardlyTheme.toolbarNSColor
+        }
+    }
+}
+
 struct BoardWorkspaceView: View {
     @EnvironmentObject private var store: BoardStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

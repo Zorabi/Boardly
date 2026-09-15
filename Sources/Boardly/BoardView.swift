@@ -1,13 +1,41 @@
 import SwiftUI
 
+/// 看板滚动内容的稳定命名坐标空间：列几何在该空间内采集，
+/// 不受窗口缩放、侧栏/Inspector 展开或滚动偏移以外的变换影响。
+enum BoardCoordinateSpace {
+    static let name = "boardly.board"
+}
+
+/// 各列在命名坐标空间中的实时 frame 上报；由 BoardView 汇总后
+/// 以纯数据向下传递，读取仅在布局阶段发生，不触发持久化。
+struct BoardColumnFramesPreferenceKey: PreferenceKey {
+    // computed var 保证 Swift 6 并发安全（无共享可变全局状态）。
+    static var defaultValue: [TaskStatus: CGRect] { [:] }
+
+    static func reduce(value: inout [TaskStatus: CGRect], nextValue: () -> [TaskStatus: CGRect]) {
+        for (status, frame) in nextValue() where value[status] == nil {
+            value[status] = frame
+        }
+    }
+}
+
 struct BoardView: View {
     @EnvironmentObject private var store: BoardStore
     let searchText: String
     let onCreateTask: (TaskStatus) -> Void
 
+    /// 列实时几何（命名坐标空间），随窗口/布局变化被动更新。
+    @State private var columnFrames: [TaskStatus: CGRect] = [:]
+
     private var visibleTaskCount: Int {
         TaskStatus.allCases.reduce(0) { result, status in
             result + store.tasks(in: status, matching: searchText).count
+        }
+    }
+
+    private var columnAnchors: [DirectGripPlanner.ColumnAnchor] {
+        TaskStatus.allCases.compactMap { status in
+            columnFrames[status].map { DirectGripPlanner.ColumnAnchor(status: status, frame: $0) }
         }
     }
 
@@ -20,15 +48,24 @@ struct BoardView: View {
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 12) {
                         ForEach(TaskStatus.allCases) { status in
-                            TaskColumnView(status: status, searchText: searchText, onCreateTask: onCreateTask)
-                                .frame(width: 280)
-                                .containerRelativeFrame(.vertical)
+                            TaskColumnView(
+                                status: status,
+                                searchText: searchText,
+                                onCreateTask: onCreateTask,
+                                columnAnchors: columnAnchors
+                            )
+                            .frame(width: 280)
+                            .containerRelativeFrame(.vertical)
                         }
                     }
                     .padding(16)
+                    .coordinateSpace(name: BoardCoordinateSpace.name)
                 }
                 .scrollIndicators(.visible)
                 .background(BoardlyTheme.canvas)
+                .onPreferenceChange(BoardColumnFramesPreferenceKey.self) { frames in
+                    columnFrames = frames
+                }
             }
         }
     }
@@ -39,6 +76,7 @@ private struct TaskColumnView: View {
     let status: TaskStatus
     let searchText: String
     let onCreateTask: (TaskStatus) -> Void
+    let columnAnchors: [DirectGripPlanner.ColumnAnchor]
     @State private var isDropTarget = false
 
     private var tasks: [BoardTask] {
@@ -57,7 +95,7 @@ private struct TaskColumnView: View {
                         emptyState
                     } else {
                         ForEach(tasks) { task in
-                            TaskCardView(task: task)
+                            TaskCardView(task: task, columnAnchors: columnAnchors)
                         }
                     }
                 }
@@ -73,6 +111,15 @@ private struct TaskColumnView: View {
                     lineWidth: isDropTarget ? 2 : 1
                 )
         }
+        // 实时上报本列在命名坐标空间中的 frame（仅在布局阶段读取，无布局回馈）。
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: BoardColumnFramesPreferenceKey.self,
+                    value: [status: geo.frame(in: .named(BoardCoordinateSpace.name))]
+                )
+            }
+        )
         // 列级落点：追加到列尾；空列同样生效。列内精确位置由卡片上的 dropDestination 处理。
         .dropDestination(for: TaskDragPayload.self) { payloads, _ in
             TaskDropHandler.handle(payloads, store: store, to: status, before: nil)

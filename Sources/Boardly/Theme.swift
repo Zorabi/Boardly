@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -18,6 +19,8 @@ enum BoardlyTheme {
     static let cardHover = Color(red: 39 / 255, green: 39 / 255, blue: 45 / 255)
     static let field = Color(red: 27 / 255, green: 27 / 255, blue: 32 / 255)
     static let section = Color(red: 26 / 255, green: 26 / 255, blue: 31 / 255)
+    /// 标题栏/工具栏语义表面：介于侧栏与字段之间，与深色色板同族。
+    static let toolbar = Color(red: 24 / 255, green: 24 / 255, blue: 29 / 255)
     static let selectedCard = accent.opacity(0.11)
     static let border = Color.white.opacity(0.08)
     static let strongBorder = Color.white.opacity(0.13)
@@ -28,6 +31,12 @@ enum BoardlyTheme {
     static let cornerRadiusField: CGFloat = 8
     static let cornerRadiusSection: CGFloat = 12
     static let cornerRadiusColumn: CGFloat = 12
+
+#if canImport(AppKit)
+    /// 标题栏/工具栏的 AppKit 对应令牌：用于窗口级 chrome（titlebar 透明 +
+    /// 窗口背景），确保 SwiftUI 工具栏与窗口标题栏颜色一致。
+    static let toolbarNSColor = NSColor(red: 24 / 255, green: 24 / 255, blue: 29 / 255, alpha: 1)
+#endif
 
     // MARK: 项目颜色
 

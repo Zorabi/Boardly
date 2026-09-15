@@ -61,7 +61,7 @@ struct NewTaskSheet: View {
                         }
                         BoardlyFormRow(label: "项目") {
                             Picker("项目", selection: $projectID) {
-                                Text("收件箱").tag(UUID?.none)
+                                Text("未分类").tag(UUID?.none)
                                 ForEach(store.projects) { project in
                                     Label(project.name, systemImage: project.symbol)
                                         .tag(UUID?.some(project.id))
