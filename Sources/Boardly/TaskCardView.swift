@@ -2,10 +2,13 @@ import SwiftUI
 
 struct TaskCardView: View {
     @EnvironmentObject private var store: BoardStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let task: BoardTask
 
     @State private var isHovering = false
     @State private var isDropTarget = false
+    @State private var isGripDragging = false
+    @State private var gripTranslation = CGSize.zero
 
     private var isSelected: Bool { store.selectedTaskID == task.id }
 
@@ -56,6 +59,13 @@ struct TaskCardView: View {
                     .padding(.top, -2)
             }
         }
+        // 直接 grip 手势进行中的反馈：位移跟随指针、轻微放大与阴影；
+        // Reduce Motion 时禁用位移动画（直接跳变），移动功能不受影响。
+        .offset(gripTranslation)
+        .scaleEffect(isGripDragging ? 1.02 : 1)
+        .opacity(isGripDragging ? 0.88 : 1)
+        .shadow(color: .black.opacity(isGripDragging ? 0.35 : 0), radius: isGripDragging ? 10 : 0, y: 4)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isGripDragging)
         .contentShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous))
         .onTapGesture { store.selectedTaskID = task.id }
         .onHover { isHovering = $0 }
@@ -91,14 +101,48 @@ struct TaskCardView: View {
         }
     }
 
-    /// 克制的拖动 affordance：悬停或选中时在卡片左上角浮现抓取指示，
-    /// 与右上角 ellipsis 菜单分居两端，互不重叠。
+    /// 直接拖动入口：左上角抓取指示始终可命中（默认弱可见，悬停/拖动时增强），
+    /// 与右上角 ellipsis 菜单分居两端，互不重叠。保留卡片其余区域的
+    /// .draggable/.dropDestination 原生拖放路径。
     private var dragGrip: some View {
         Image(systemName: "line.3.horizontal")
             .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(.tertiary)
-            .opacity(isHovering || isSelected ? 1 : 0)
-            .accessibilityHidden(true)
+            .foregroundStyle(isGripDragging ? BoardlyTheme.accent : Color.secondary)
+            .frame(width: 24, height: 20)
+            .contentShape(Rectangle())
+            .opacity(gripVisibility)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { value in
+                        isGripDragging = true
+                        gripTranslation = value.translation
+                    }
+                    .onEnded { value in
+                        applyDirectGrip(translation: value.translation)
+                        gripTranslation = .zero
+                        isGripDragging = false
+                    }
+            )
+            .accessibilityLabel("直接拖动移动任务")
+            .accessibilityHint("按住后左右拖动跨列，上下拖动在同列内调整顺序；也可使用移动菜单。")
+    }
+
+    /// 默认弱可见（不依赖 opacity 0 命中），悬停、选中或拖动时增强。
+    private var gripVisibility: Double {
+        if isGripDragging { return 1 }
+        if isHovering || isSelected { return 1 }
+        return 0.45
+    }
+
+    /// 直接 grip 手势结束：交给纯函数 DirectGripPlanner 决策后应用移动。
+    private func applyDirectGrip(translation: CGSize) {
+        guard let plan = DirectGripPlanner.plan(
+            taskID: task.id,
+            source: task.status,
+            orderedIDs: store.tasks(in: task.status).map(\.id),
+            translation: translation
+        ) else { return }
+        store.moveTask(id: task.id, to: plan.status, before: plan.before)
     }
 
     /// 无需拖放的状态移动菜单：满足键盘、VoiceOver 与触控板之外的可靠退路。
@@ -191,6 +235,61 @@ struct TaskCardView: View {
             parts.append("截止日期：\(dueDate.formatted(date: .long, time: .omitted))")
         }
         return parts.joined(separator: "，")
+    }
+}
+
+// MARK: - 直接 grip 手势映射
+
+/// 直接 grip 手势的落点决策（纯函数，视图与单测共用）：
+/// 按水平位移除以列步长计算目标列（四舍五入、越界夹取）；
+/// 水平位移不足以跨列时按垂直方向执行同列上移/下移一位。
+enum DirectGripPlanner {
+    /// 列宽 280 + 列间距 12。
+    static let columnStride: CGFloat = 292
+    /// 垂直方向触发上移/下移的最小位移。
+    static let verticalThreshold: CGFloat = 24
+
+    struct Plan: Equatable {
+        let status: TaskStatus
+        let before: BoardTask.ID?
+    }
+
+    /// 返回 nil 表示本次拖动不产生移动（位移过小、首行上移、尾行下移或未知任务）。
+    static func plan(
+        taskID: BoardTask.ID,
+        source: TaskStatus,
+        orderedIDs: [BoardTask.ID],
+        translation: CGSize,
+        columnStride: CGFloat = DirectGripPlanner.columnStride,
+        verticalThreshold: CGFloat = DirectGripPlanner.verticalThreshold
+    ) -> Plan? {
+        guard let sourceIndex = orderedIDs.firstIndex(of: taskID) else { return nil }
+        guard let sourceOrdinal = TaskStatus.allCases.firstIndex(of: source) else { return nil }
+
+        let columnDelta = Int((translation.width / columnStride).rounded())
+        let targetOrdinal = min(
+            max(sourceOrdinal + columnDelta, 0),
+            TaskStatus.allCases.count - 1
+        )
+
+        // 水平位移跨列：追加到目标列列尾（空列同样成立）。
+        if targetOrdinal != sourceOrdinal {
+            return Plan(status: TaskStatus.allCases[targetOrdinal], before: nil)
+        }
+
+        // 水平位移不足：按垂直方向同列上移/下移一位。
+        if translation.height <= -verticalThreshold {
+            guard sourceIndex > 0 else { return nil } // 已是列首
+            return Plan(status: source, before: orderedIDs[sourceIndex - 1])
+        }
+        if translation.height >= verticalThreshold {
+            guard sourceIndex < orderedIDs.count - 1 else { return nil } // 已是列尾
+            // 下移一位 = 插入到“下下张”之前；没有下下张则追加列尾。
+            let afterNext = sourceIndex + 2
+            let before = afterNext < orderedIDs.count ? orderedIDs[afterNext] : nil
+            return Plan(status: source, before: before)
+        }
+        return nil
     }
 }
 
