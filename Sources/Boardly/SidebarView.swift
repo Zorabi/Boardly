@@ -9,7 +9,7 @@ struct SidebarView: View {
     var body: some View {
         List(selection: $store.selectedScope) {
             Section("任务") {
-                SidebarRow(title: "收件箱", systemImage: "tray", count: inboxCount)
+                SidebarRow(title: "未分类", systemImage: "tray", count: inboxCount)
                     .tag(SidebarScope.inbox)
                 SidebarRow(title: "今天", systemImage: "sun.max", count: todayCount)
                     .tag(SidebarScope.today)
@@ -68,7 +68,7 @@ struct SidebarView: View {
                 projectPendingDeletion = nil
             }
         } message: {
-            Text("项目内的任务不会被删除，会回到收件箱。")
+            Text("项目内的任务不会被删除，会回到未分类。")
         }
     }
 

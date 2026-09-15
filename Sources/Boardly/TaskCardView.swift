@@ -4,6 +4,9 @@ struct TaskCardView: View {
     @EnvironmentObject private var store: BoardStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let task: BoardTask
+    /// 看板命名坐标空间中实时采集的列几何，由 BoardView 注入；
+    /// 直接 grip 手势用它替代固定列步长推断目标列。
+    var columnAnchors: [DirectGripPlanner.ColumnAnchor] = []
 
     @State private var isHovering = false
     @State private var isDropTarget = false
@@ -134,13 +137,14 @@ struct TaskCardView: View {
         return 0.45
     }
 
-    /// 直接 grip 手势结束：交给纯函数 DirectGripPlanner 决策后应用移动。
+    /// 直接 grip 手势结束：交给纯函数 DirectGripPlanner 依据实时列几何决策。
     private func applyDirectGrip(translation: CGSize) {
         guard let plan = DirectGripPlanner.plan(
             taskID: task.id,
             source: task.status,
             orderedIDs: store.tasks(in: task.status).map(\.id),
-            translation: translation
+            translation: translation,
+            columnAnchors: columnAnchors
         ) else { return }
         store.moveTask(id: task.id, to: plan.status, before: plan.before)
     }
@@ -193,7 +197,7 @@ struct TaskCardView: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            Label("收件箱", systemImage: "tray")
+            Label("未分类", systemImage: "tray")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
         }
@@ -241,40 +245,61 @@ struct TaskCardView: View {
 // MARK: - 直接 grip 手势映射
 
 /// 直接 grip 手势的落点决策（纯函数，视图与单测共用）：
-/// 按水平位移除以列步长计算目标列（四舍五入、越界夹取）；
-/// 水平位移不足以跨列时按垂直方向执行同列上移/下移一位。
+/// 依据运行时采集的真实列几何，将“源列中心 + 水平位移”的实际 X 映射到
+/// 包含该 X 或中心最近的列（天然越界夹取首末列），不依赖任何固定列步长；
+/// 目标仍是源列（水平位移不足）时按垂直方向执行同列上移/下移一位。
 enum DirectGripPlanner {
-    /// 列宽 280 + 列间距 12。
-    static let columnStride: CGFloat = 292
     /// 垂直方向触发上移/下移的最小位移。
     static let verticalThreshold: CGFloat = 24
+
+    /// 一列在看板命名坐标空间中的实时几何。
+    struct ColumnAnchor: Equatable {
+        let status: TaskStatus
+        let frame: CGRect
+
+        var center: CGFloat { frame.midX }
+
+        /// targetX 落在本列水平范围内（不含右边界，避免相邻列边界重叠）。
+        func containsX(_ x: CGFloat) -> Bool {
+            frame.minX <= x && x < frame.maxX
+        }
+    }
 
     struct Plan: Equatable {
         let status: TaskStatus
         let before: BoardTask.ID?
     }
 
-    /// 返回 nil 表示本次拖动不产生移动（位移过小、首行上移、尾行下移或未知任务）。
+    /// 返回 nil 表示本次拖动不产生移动（几何缺失、位移过小、首行上移、尾行下移或未知任务）。
     static func plan(
         taskID: BoardTask.ID,
         source: TaskStatus,
         orderedIDs: [BoardTask.ID],
         translation: CGSize,
-        columnStride: CGFloat = DirectGripPlanner.columnStride,
+        columnAnchors: [ColumnAnchor],
         verticalThreshold: CGFloat = DirectGripPlanner.verticalThreshold
     ) -> Plan? {
         guard let sourceIndex = orderedIDs.firstIndex(of: taskID) else { return nil }
-        guard let sourceOrdinal = TaskStatus.allCases.firstIndex(of: source) else { return nil }
+        guard let sourceAnchor = columnAnchors.first(where: { $0.status == source }) else { return nil }
 
-        let columnDelta = Int((translation.width / columnStride).rounded())
-        let targetOrdinal = min(
-            max(sourceOrdinal + columnDelta, 0),
-            TaskStatus.allCases.count - 1
-        )
+        // 实际落点 X：源列实时中心 + 水平位移（几何随窗口缩放/侧栏变化自动适配）。
+        let targetX = sourceAnchor.center + translation.width
 
-        // 水平位移跨列：追加到目标列列尾（空列同样成立）。
-        if targetOrdinal != sourceOrdinal {
-            return Plan(status: TaskStatus.allCases[targetOrdinal], before: nil)
+        // 包含 targetX 的列优先；否则取中心最近的列（左右越界自然夹取首末列）。
+        let target: ColumnAnchor
+        if let containing = columnAnchors.first(where: { $0.containsX(targetX) }) {
+            target = containing
+        } else if let nearest = columnAnchors.min(by: {
+            abs($0.center - targetX) < abs($1.center - targetX)
+        }) {
+            target = nearest
+        } else {
+            return nil
+        }
+
+        // 跨列：追加到目标列列尾（空列同样成立）。
+        if target.status != source {
+            return Plan(status: target.status, before: nil)
         }
 
         // 水平位移不足：按垂直方向同列上移/下移一位。
