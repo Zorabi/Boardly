@@ -22,6 +22,108 @@ final class BoardStoreTests: XCTestCase {
         )
     }
 
+    func testDirectGripPlannerCrossesColumnsAndClampsAtBounds() {
+        let ids = [BoardTask.ID(), BoardTask.ID()]
+        let taskID = ids[0]
+
+        func plan(width: CGFloat) -> DirectGripPlanner.Plan? {
+            DirectGripPlanner.plan(
+                taskID: taskID,
+                source: .todo,
+                orderedIDs: ids,
+                translation: CGSize(width: width, height: 0)
+            )
+        }
+
+        // 跨 1 / 2 列（步长 292）。
+        XCTAssertEqual(plan(width: 292), DirectGripPlanner.Plan(status: .inProgress, before: nil))
+        XCTAssertEqual(plan(width: 584), DirectGripPlanner.Plan(status: .done, before: nil))
+        // 跨 3 列越界：夹取到最后一列。
+        XCTAssertEqual(plan(width: 876), DirectGripPlanner.Plan(status: .done, before: nil))
+        // 向左跨列与越界夹取。
+        XCTAssertEqual(plan(width: -292), DirectGripPlanner.Plan(status: .backlog, before: nil))
+        XCTAssertEqual(plan(width: -876), DirectGripPlanner.Plan(status: .backlog, before: nil))
+        // 半个步长的反向位移四舍五入为 0 列：不跨列且无垂直分量 → 无移动。
+        XCTAssertNil(plan(width: 30))
+    }
+
+    func testDirectGripPlannerBelowHorizontalThresholdMovesVertically() {
+        let three = [BoardTask.ID(), BoardTask.ID(), BoardTask.ID()]
+        let middle = three[1]
+
+        // 水平位移低于阈值、向上 → 插入到上一张之前。
+        let up = DirectGripPlanner.plan(
+            taskID: middle, source: .todo, orderedIDs: three,
+            translation: CGSize(width: 30, height: -80)
+        )
+        XCTAssertEqual(up, DirectGripPlanner.Plan(status: .todo, before: three[0]))
+
+        // 向下 → 3 张卡中第 2 张下移一位等于追加列尾。
+        let down = DirectGripPlanner.plan(
+            taskID: middle, source: .todo, orderedIDs: three,
+            translation: CGSize(width: 0, height: 80)
+        )
+        XCTAssertEqual(down, DirectGripPlanner.Plan(status: .todo, before: nil))
+
+        // 4 张卡中第 2 张下移一位 = 插入到第 4 张之前。
+        let four = [BoardTask.ID(), BoardTask.ID(), BoardTask.ID(), BoardTask.ID()]
+        let downFour = DirectGripPlanner.plan(
+            taskID: four[1], source: .inProgress, orderedIDs: four,
+            translation: CGSize(width: 0, height: 60)
+        )
+        XCTAssertEqual(downFour, DirectGripPlanner.Plan(status: .inProgress, before: four[3]))
+    }
+
+    func testDirectGripPlannerVerticalBoundariesAndNoOps() {
+        let ids = [BoardTask.ID(), BoardTask.ID()]
+
+        // 首行上移、尾行下移、位移过小：均不产生移动。
+        XCTAssertNil(DirectGripPlanner.plan(
+            taskID: ids[0], source: .todo, orderedIDs: ids,
+            translation: CGSize(width: 0, height: -60)
+        ))
+        XCTAssertNil(DirectGripPlanner.plan(
+            taskID: ids[1], source: .todo, orderedIDs: ids,
+            translation: CGSize(width: 0, height: 60)
+        ))
+        XCTAssertNil(DirectGripPlanner.plan(
+            taskID: ids[0], source: .todo, orderedIDs: ids,
+            translation: CGSize(width: 8, height: 12)
+        ))
+        // 未知任务 ID（含空列情形）不产生移动。
+        XCTAssertNil(DirectGripPlanner.plan(
+            taskID: BoardTask.ID(), source: .todo, orderedIDs: [],
+            translation: CGSize(width: 292, height: 0)
+        ))
+    }
+
+    func testDirectGripPlanAppliesToStoreWithCorrectBeforeSemantics() {
+        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
+        let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
+        let backlogTask = BoardTask(title: "Backlog item", status: .backlog, sortOrder: 0)
+        let store = BoardStore(tasks: [first, second, backlogTask])
+        let orderedIDs = store.tasks(in: .backlog).map(\.id)
+
+        // 跨列计划（追加空/目标列语义）→ 应用后顺序正确。
+        let cross = DirectGripPlanner.plan(
+            taskID: backlogTask.id, source: .backlog, orderedIDs: orderedIDs,
+            translation: CGSize(width: 292, height: 0)
+        )
+        XCTAssertEqual(cross, DirectGripPlanner.Plan(status: .todo, before: nil))
+        store.moveTask(id: backlogTask.id, to: cross!.status, before: cross!.before)
+        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [first.id, second.id, backlogTask.id])
+
+        // 垂直计划（上移一位）→ 应用后插到上一张之前。
+        let vertical = DirectGripPlanner.plan(
+            taskID: backlogTask.id, source: .todo,
+            orderedIDs: store.tasks(in: .todo).map(\.id),
+            translation: CGSize(width: 0, height: -80)
+        )
+        XCTAssertEqual(vertical, DirectGripPlanner.Plan(status: .todo, before: second.id))
+        store.moveTask(id: backlogTask.id, to: vertical!.status, before: vertical!.before)
+        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [first.id, backlogTask.id, second.id])
+    }
+
     func testDropActionMovesTaskBeforeDestinationCard() {
         let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
         let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
