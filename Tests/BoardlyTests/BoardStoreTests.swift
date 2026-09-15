@@ -10,28 +10,56 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertFalse(BoardlyTheme.taskDragType.identifier.isEmpty)
     }
 
-    func testTaskDragPayloadRoundTripsTaskIDThroughProvider() async throws {
-        let task = BoardTask(title: "Drag me", status: .todo)
-        let provider = TaskDragPayload.makeProvider(taskID: task.id)
-
-        XCTAssertTrue(provider.hasItemConformingToTypeIdentifier(BoardlyTheme.taskDragType.identifier))
-
-        let decoded = try await TaskDragPayload.decodeTaskID(from: provider)
-        XCTAssertEqual(decoded, task.id)
+    func testTaskDragPayloadCodableRoundTrip() throws {
+        // Transferable 的 CodableRepresentation 依赖稳定 JSON 编解码。
+        let payload = TaskDragPayload(taskID: BoardTask.ID())
+        let data = try JSONEncoder().encode(payload)
+        let decoded = try JSONDecoder().decode(TaskDragPayload.self, from: data)
+        XCTAssertEqual(decoded, payload)
+        XCTAssertEqual(
+            String(data: try JSONEncoder().encode(TaskDragPayload(taskID: payload.taskID)), encoding: .utf8),
+            #"{"taskID":"\#(payload.taskID.uuidString)"}"#
+        )
     }
 
-    func testTaskDragPayloadRejectsNonUUIDData() async throws {
-        let provider = NSItemProvider()
-        provider.registerDataRepresentation(
-            forTypeIdentifier: BoardlyTheme.taskDragType.identifier,
-            visibility: .all
-        ) { completion in
-            completion("not-a-uuid".data(using: .utf8), nil)
-            return nil
-        }
+    func testDropActionMovesTaskBeforeDestinationCard() {
+        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
+        let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
+        let backlogTask = BoardTask(title: "Backlog item", status: .backlog, sortOrder: 0)
+        let store = BoardStore(tasks: [first, second, backlogTask])
 
-        let decoded = try await TaskDragPayload.decodeTaskID(from: provider)
-        XCTAssertNil(decoded)
+        // 模拟卡片落点的 dropDestination action：拖 Backlog 卡到待办首卡上方。
+        let accepted = TaskDropHandler.handle(
+            [TaskDragPayload(taskID: backlogTask.id)],
+            store: store,
+            to: .todo,
+            before: first.id
+        )
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [backlogTask.id, first.id, second.id])
+        XCTAssertTrue(store.tasks(in: .backlog).isEmpty)
+    }
+
+    func testDropActionAppendsToColumnEndAndRejectsSelfDrop() {
+        let task = BoardTask(title: "Solo", status: .backlog, sortOrder: 0)
+        let store = BoardStore(tasks: [task])
+
+        // 模拟列级落点（空列或列尾）：before 为 nil，追加到列尾。
+        XCTAssertTrue(
+            TaskDropHandler.handle([TaskDragPayload(taskID: task.id)], store: store, to: .todo, before: nil)
+        )
+        XCTAssertEqual(store.task(withID: task.id)?.status, .todo)
+        XCTAssertEqual(store.task(withID: task.id)?.sortOrder, 0)
+
+        // 拖到自身卡片上：拒绝且不产生任何移动。
+        XCTAssertFalse(
+            TaskDropHandler.handle([TaskDragPayload(taskID: task.id)], store: store, to: .backlog, before: task.id)
+        )
+        XCTAssertEqual(store.task(withID: task.id)?.status, .todo)
+
+        // 空载荷同样拒绝。
+        XCTAssertFalse(TaskDropHandler.handle([], store: store, to: .backlog, before: nil))
     }
 
     func testMoveTaskChangesStatusAndAppendsToDestination() {
