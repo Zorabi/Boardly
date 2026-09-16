@@ -164,21 +164,44 @@ struct BoardTask: Identifiable, Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
-        notes = (try? container.decode(String.self, forKey: .notes)) ?? ""
-        if let decoded = try? container.decode(UUID.self, forKey: .columnID) {
+        // 旧版兼容默认仅用于“字段真正缺失”（可选字段允许合法 null）；
+        // 字段存在但类型/取值畸形必须抛错，绝不静默重置。
+        notes = try Self.decodeField(String.self, default: "", in: container, forKey: .notes)
+        if container.contains(.columnID),
+           let decoded = try container.decodeIfPresent(UUID.self, forKey: .columnID) {
             columnID = decoded
         } else if container.contains(.legacyStatus) {
-            // 旧 status 字段存在时必须可解析：畸形取值抛错，而不是静默落到待办列。
             let legacy = try container.decode(TaskStatus.self, forKey: .legacyStatus)
             columnID = DefaultColumns.columnID(for: legacy)
         } else {
             columnID = DefaultColumns.todoID
         }
-        priority = (try? container.decode(TaskPriority.self, forKey: .priority)) ?? .medium
-        projectID = try? container.decode(UUID.self, forKey: .projectID)
-        dueDate = try? container.decode(Date.self, forKey: .dueDate)
-        tags = (try? container.decode([String].self, forKey: .tags)) ?? []
-        sortOrder = (try? container.decode(Int.self, forKey: .sortOrder)) ?? 0
+        priority = try Self.decodeField(TaskPriority.self, default: .medium, in: container, forKey: .priority)
+        projectID = try Self.decodeOptionalField(UUID.self, in: container, forKey: .projectID)
+        dueDate = try Self.decodeOptionalField(Date.self, in: container, forKey: .dueDate)
+        tags = try Self.decodeField([String].self, default: [], in: container, forKey: .tags)
+        sortOrder = try Self.decodeField(Int.self, default: 0, in: container, forKey: .sortOrder)
+    }
+
+    /// 键缺失时返回旧版默认值；键存在但解码失败（类型/取值畸形）时抛错。
+    private static func decodeField<T: Decodable>(
+        _ type: T.Type,
+        default fallback: T,
+        in container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) throws -> T {
+        guard container.contains(key) else { return fallback }
+        return try container.decode(T.self, forKey: key)
+    }
+
+    /// 可选字段：缺失或合法 null 返回 nil；存在但非 null 且畸形时抛错。
+    private static func decodeOptionalField<T: Decodable>(
+        _ type: T.Type,
+        in container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) throws -> T? {
+        guard container.contains(key) else { return nil }
+        return try container.decodeIfPresent(T.self, forKey: key)
     }
 
     func encode(to encoder: Encoder) throws {

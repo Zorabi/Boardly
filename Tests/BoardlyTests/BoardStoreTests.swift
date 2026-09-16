@@ -88,14 +88,15 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.tasks.first?.columnID, snapshot.columns.minByOrder()?.id)
     }
 
-    /// 缺 isDone 的自定义列必须原样保留（不退回默认列）；isDone 缺省 false，
-    /// 且解码恢复“至少一个完成列”不变量：末列被标记为完成列。
+    /// 缺 isDone 的自定义列必须原样保留（不退回默认列）；isDone 缺省 false；
+    /// 无任何完成列时追加独立“已完成”列满足不变量，不把现有列改成完成语义。
     func testCustomColumnMissingIsDoneIsPreserved() throws {
         let firstID = "eeeeeeee-0000-0000-0000-000000000001"
         let secondID = "eeeeeeee-0000-0000-0000-000000000002"
         let json = """
         {
           "schemaVersion": 2,
+          "projects": [],
           "columns": [
             {"id": "\(firstID)", "name": "测试中", "symbol": "testtube.2", "colorName": "teal", "sortOrder": 0},
             {"id": "\(secondID)", "name": "验证中", "symbol": "eyeglasses", "colorName": "pink", "sortOrder": 1}
@@ -107,11 +108,109 @@ final class BoardStoreTests: XCTestCase {
         """
         let snapshot = try BoardStore.decodeSnapshot(Data(json.utf8))
 
-        XCTAssertEqual(snapshot.columns.map(\.name), ["测试中", "验证中"], "缺 isDone 的自定义列不得退回默认列")
-        XCTAssertEqual(snapshot.columns.first?.isDone, false)
-        XCTAssertEqual(snapshot.columns.last?.isDone, true, "无任何完成列时恢复末列为完成列")
-        XCTAssertEqual(snapshot.tasks.first?.columnID, UUID(uuidString: secondID))
+        XCTAssertEqual(
+            snapshot.columns.map(\.name),
+            ["测试中", "验证中", "已完成"],
+            "缺 isDone 的自定义列不得退回默认列，且追加独立完成列"
+        )
+        XCTAssertEqual(snapshot.columns.first?.isDone, false, "现有自定义列保持未完成语义")
+        XCTAssertEqual(snapshot.columns.first?.sortOrder, 0, "现有列顺序不变")
+        XCTAssertEqual(snapshot.columns.last?.id, DefaultColumns.doneID, "追加的完成列使用已知默认 doneID")
+        XCTAssertEqual(snapshot.columns.last?.isDone, true)
+        XCTAssertEqual(snapshot.tasks.first?.columnID, UUID(uuidString: secondID), "任务保持原列（未完成语义）")
         XCTAssertEqual(snapshot.schemaVersion, 2)
+    }
+
+    /// 无完成列但快照里已有 DefaultColumns.doneID（如手工关闭过）：恢复该已知默认列，
+    /// 不追加新列、不改写其他自定义列。
+    func testNoDoneColumnRestoresKnownDefaultDoneColumn() throws {
+        let custom = "eeeeeeee-0000-0000-0000-000000000003"
+        let json = """
+        {
+          "schemaVersion": 2,
+          "projects": [],
+          "columns": [
+            {"id": "\(custom)", "name": "自定义", "symbol": "bolt", "colorName": "amber", "sortOrder": 0},
+            {"id": "\(DefaultColumns.doneID.uuidString)", "name": "已完成", "symbol": "checkmark.circle.fill", "colorName": "green", "sortOrder": 1, "isDone": false}
+          ],
+          "tasks": []
+        }
+        """
+        let snapshot = try BoardStore.decodeSnapshot(Data(json.utf8))
+
+        XCTAssertEqual(snapshot.columns.count, 2, "恢复已知默认完成列，不追加新列")
+        XCTAssertEqual(
+            snapshot.columns.first(where: { $0.id == DefaultColumns.doneID })?.isDone,
+            true,
+            "已知默认 doneID 列恢复完成语义"
+        )
+        XCTAssertEqual(
+            snapshot.columns.first(where: { $0.name == "自定义" })?.isDone,
+            false,
+            "自定义列语义不变"
+        )
+    }
+
+    /// v2 快照缺 projects/columns/tasks 任一必需键：必须抛错，不得降级空集合后覆盖原数据。
+    func testV2SnapshotRequiresAllCollectionKeys() {
+        let columns = "[{\"id\": \"cccccccc-0000-0000-0000-00000000000a\", \"name\": \"A\", \"symbol\": \"circle\", \"colorName\": \"blue\", \"sortOrder\": 0}]"
+        let tasks = "[{\"id\": \"dddddddd-0000-0000-0000-00000000000b\", \"title\": \"T\", \"columnID\": \"cccccccc-0000-0000-0000-00000000000a\", \"sortOrder\": 0}]"
+
+        XCTAssertThrowsError(
+            try BoardStore.decodeSnapshot(Data("{\"schemaVersion\": 2, \"columns\": \(columns), \"tasks\": \(tasks)}".utf8)),
+            "v2 缺 projects 必须抛错"
+        )
+        XCTAssertThrowsError(
+            try BoardStore.decodeSnapshot(Data("{\"schemaVersion\": 2, \"projects\": [], \"tasks\": \(tasks)}".utf8)),
+            "v2 缺 columns 必须抛错"
+        )
+        XCTAssertThrowsError(
+            try BoardStore.decodeSnapshot(Data("{\"schemaVersion\": 2, \"projects\": [], \"columns\": \(columns)}".utf8)),
+            "v2 缺 tasks 必须抛错"
+        )
+    }
+
+    /// BoardTask 字段级严格解码：字段存在但类型/取值畸形必须抛错；
+    /// 仅字段缺失（或可选字段合法 null）才使用旧版默认。
+    func testTaskFieldMalformedValuesThrow() throws {
+        let base = #"{"id": "aaaaaaaa-0000-0000-0000-0000000000aa", "title": "T""#
+
+        // 每个可容忍默认字段的畸形取值：全部抛错。
+        for malformed in [
+            #", "notes": 42}"#,
+            #", "columnID": 123}"#,
+            #", "priority": "urgent"}"#,
+            #", "projectID": "not-a-uuid"}"#,
+            #", "dueDate": "yesterday"}"#,
+            #", "tags": "not-an-array"}"#,
+            #", "tags": [42]}"#,
+            #", "sortOrder": "zero"}"#
+        ] {
+            XCTAssertThrowsError(
+                try JSONDecoder().decode(BoardTask.self, from: Data((base + malformed).utf8)),
+                "字段存在但畸形必须抛错：\(malformed)"
+            )
+        }
+
+        // 缺字段 → 旧版默认；可选字段合法 null → nil。
+        let minimal = try JSONDecoder().decode(
+            BoardTask.self,
+            from: Data(#"{"id": "aaaaaaaa-0000-0000-0000-0000000000ab", "title": "最小任务", "status": "todo"}"#.utf8)
+        )
+        XCTAssertEqual(minimal.notes, "")
+        XCTAssertEqual(minimal.columnID, DefaultColumns.todoID)
+        XCTAssertEqual(minimal.priority, .medium)
+        XCTAssertNil(minimal.projectID)
+        XCTAssertNil(minimal.dueDate)
+        XCTAssertEqual(minimal.tags, [])
+        XCTAssertEqual(minimal.sortOrder, 0)
+
+        let nulls = try JSONDecoder().decode(
+            BoardTask.self,
+            from: Data(#"{"id": "aaaaaaaa-0000-0000-0000-0000000000ac", "title": "空值任务", "columnID": "eeeeeeee-0000-0000-0000-00000000000d", "projectID": null, "dueDate": null}"#.utf8)
+        )
+        XCTAssertNil(nulls.projectID)
+        XCTAssertNil(nulls.dueDate)
     }
 
     /// 集合字段存在但格式错误：必须抛错，而不是静默清空后让保存覆盖原数据。
