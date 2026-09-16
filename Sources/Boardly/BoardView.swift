@@ -225,13 +225,13 @@ private struct TaskColumnView: View {
                 Label("重命名列…", systemImage: "pencil")
             }
             Button {
-                store.moveColumn(id: column.id, before: leftNeighbor?.id)
+                store.moveColumn(id: column.id, byOffset: -1)
             } label: {
                 Label("左移列", systemImage: "arrow.left")
             }
             .disabled(leftNeighbor == nil)
             Button {
-                store.moveColumn(id: column.id, before: rightNeighbor.map { $0.id } ?? nil)
+                store.moveColumn(id: column.id, byOffset: 1)
             } label: {
                 Label("右移列", systemImage: "arrow.right")
             }

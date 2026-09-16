@@ -56,9 +56,9 @@ final class BoardStore: ObservableObject {
         doneColumnIDs.contains(id)
     }
 
-    /// 新增列（追加到末尾）。
+    /// 新增列（追加到末尾）；isDone 声明完成语义列。
     @discardableResult
-    func addColumn(name: String, symbol: String, colorName: String) -> BoardColumn.ID? {
+    func addColumn(name: String, symbol: String, colorName: String, isDone: Bool = false) -> BoardColumn.ID? {
         let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanedName.isEmpty else { return nil }
 
@@ -66,22 +66,30 @@ final class BoardStore: ObservableObject {
             name: cleanedName,
             symbol: symbol,
             colorName: colorName,
-            sortOrder: (columns.map(\.sortOrder).max() ?? -1) + 1
+            sortOrder: (columns.map(\.sortOrder).max() ?? -1) + 1,
+            isDone: isDone
         )
         columns.append(column)
         persist()
         return column.id
     }
 
-    /// 重命名列 / 调整图标与颜色。
-    func updateColumn(_ updated: BoardColumn) {
+    /// 重命名列 / 调整图标、颜色与完成语义。
+    /// 返回 false 表示拒绝：最后一个完成列不允许关闭完成语义（侧栏计数与置灰依赖它）。
+    @discardableResult
+    func updateColumn(_ updated: BoardColumn) -> Bool {
         let cleanedName = updated.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanedName.isEmpty,
-              let index = columns.firstIndex(where: { $0.id == updated.id }) else { return }
+              let index = columns.firstIndex(where: { $0.id == updated.id }) else { return false }
+        if columns[index].isDone && !updated.isDone && columns.filter(\.isDone).count <= 1 {
+            return false
+        }
         columns[index].name = cleanedName
         columns[index].symbol = updated.symbol
         columns[index].colorName = updated.colorName
+        columns[index].isDone = updated.isDone
         persist()
+        return true
     }
 
     /// 调整列顺序：插入到 destinationID 之前；destinationID 为 nil 移到末尾。
@@ -101,14 +109,30 @@ final class BoardStore: ObservableObject {
         persist()
     }
 
-    /// 删除列并将其任务迁移到目标列（非空列禁止静默删除；最后一列不可删除）。
+    /// 相邻移动一位（左移列/右移列菜单）：与邻居交换位置，越界时不做任何更改。
+    func moveColumn(id: BoardColumn.ID, byOffset offset: Int) {
+        guard offset != 0 else { return }
+        var orderedIDs = orderedColumns.map(\.id)
+        guard let sourceIndex = orderedIDs.firstIndex(of: id) else { return }
+        let destinationIndex = sourceIndex + offset
+        guard orderedIDs.indices.contains(destinationIndex) else { return }
+        orderedIDs.swapAt(sourceIndex, destinationIndex)
+        applyColumnOrder(orderedIDs)
+        persist()
+    }
+
+    /// 删除列并将其任务迁移到目标列（非空列禁止静默删除；最后一列不可删除；
+    /// 最后一个完成列不可删除——完成语义无法迁移，删除会使侧栏计数永久失真）。
     /// 返回 false 表示拒绝本次删除。
     @discardableResult
     func deleteColumn(id: BoardColumn.ID, migratingTasksTo targetID: BoardColumn.ID) -> Bool {
         guard id != targetID,
               columns.count > 1,
-              columns.contains(where: { $0.id == id }),
+              let deleting = columns.first(where: { $0.id == id }),
               columns.contains(where: { $0.id == targetID }) else { return false }
+        if deleting.isDone && columns.filter(\.isDone).count <= 1 {
+            return false
+        }
 
         let removedTasks = tasks(inRaw: id).sorted { $0.sortOrder < $1.sortOrder }
         let nextOrder = (tasks(inRaw: targetID).map(\.sortOrder).max() ?? -1) + 1
@@ -328,12 +352,32 @@ final class BoardStore: ObservableObject {
         }
     }
 
-    /// 解码快照并做安全回收：缺列时补默认列；任务引用的列不存在时归入首列，
-    /// 保证任何历史数据都不丢任务。供加载与单元测试共用。
-    nonisolated static func decodeSnapshot(_ data: Data) throws -> (projects: [Project], columns: [BoardColumn], tasks: [BoardTask]) {
+    /// 解码后的快照：schemaVersion 标记来源版本，供加载侧决定是否写迁移备份。
+    struct DecodedSnapshot: Sendable {
+        var projects: [Project]
+        var columns: [BoardColumn]
+        var tasks: [BoardTask]
+        var schemaVersion: Int
+    }
+
+    /// 解码快照并做安全回收：缺列时补默认列（旧版迁移）；没有任何完成列时把末列
+    /// 恢复为完成列（保证侧栏计数/置灰语义可用）；任务引用的列不存在时归入首列。
+    /// 字段缺失按空集合/默认值兼容，字段存在但格式错误会抛出——绝不静默丢弃整个集合。
+    /// 供加载与单元测试共用。
+    nonisolated static func decodeSnapshot(_ data: Data) throws -> DecodedSnapshot {
         let snapshot = try JSONDecoder().decode(StoreSnapshot.self, from: data)
-        let columns = normalized(snapshot.columns)
-        let fallback = columns.min { $0.sortOrder == $1.sortOrder ? $0.id.uuidString < $1.id.uuidString : $0.sortOrder < $1.sortOrder }
+        var columns = normalized(snapshot.columns)
+        if !columns.contains(where: \.isDone) {
+            let ordered = columns.sorted {
+                $0.sortOrder == $1.sortOrder ? $0.id.uuidString < $1.id.uuidString : $0.sortOrder < $1.sortOrder
+            }
+            if let last = ordered.last, let index = columns.firstIndex(where: { $0.id == last.id }) {
+                columns[index].isDone = true
+            }
+        }
+        let fallback = columns.min {
+            $0.sortOrder == $1.sortOrder ? $0.id.uuidString < $1.id.uuidString : $0.sortOrder < $1.sortOrder
+        }
         let columnIDs = Set(columns.map(\.id))
         let tasks = snapshot.tasks.map { task in
             var task = task
@@ -342,20 +386,30 @@ final class BoardStore: ObservableObject {
             }
             return task
         }
-        return (snapshot.projects, columns, tasks)
+        return DecodedSnapshot(
+            projects: snapshot.projects,
+            columns: columns,
+            tasks: tasks,
+            schemaVersion: snapshot.schemaVersion
+        )
     }
 }
 
 private struct StoreSnapshot: Codable {
+    /// 当前写入版本：v1 = 旧版（status 字段、无 columns），v2 = 自定义列 + isDone。
+    static let currentSchemaVersion = 2
+
+    var schemaVersion: Int
     var projects: [Project]
     var columns: [BoardColumn]
     var tasks: [BoardTask]
 
     enum CodingKeys: String, CodingKey {
-        case projects, columns, tasks
+        case schemaVersion, projects, columns, tasks
     }
 
     init(projects: [Project], columns: [BoardColumn], tasks: [BoardTask]) {
+        self.schemaVersion = Self.currentSchemaVersion
         self.projects = projects
         self.columns = columns
         self.tasks = tasks
@@ -363,14 +417,32 @@ private struct StoreSnapshot: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        // 旧快照没有 columns 字段：补默认四列，任务由 BoardTask 兜底映射 columnID。
-        projects = (try? container.decode([Project].self, forKey: .projects)) ?? []
-        if let decoded = try? container.decode([BoardColumn].self, forKey: .columns), !decoded.isEmpty {
-            columns = decoded
-        } else {
-            columns = DefaultColumns.makeDefaults()
+        let version = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        guard (1...Self.currentSchemaVersion).contains(version) else {
+            // 更新的未来版本（例如降级运行旧 App）：显式拒绝，触发备份而非误覆盖。
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [CodingKeys.schemaVersion],
+                debugDescription: "board.json schemaVersion \(version) 高于本版本支持的 \(Self.currentSchemaVersion)"
+            ))
         }
-        tasks = (try? container.decode([BoardTask].self, forKey: .tasks)) ?? []
+        schemaVersion = version
+        // 字段缺失视为空集合/旧版布局；字段存在但格式错误必须抛出，绝不静默丢集合。
+        if container.contains(.projects) {
+            projects = try container.decode([Project].self, forKey: .projects)
+        } else {
+            projects = []
+        }
+        if container.contains(.columns) {
+            columns = try container.decode([BoardColumn].self, forKey: .columns)
+        } else {
+            // 旧版（v1）没有 columns：由 decodeSnapshot 补默认四列并按 status 迁移任务。
+            columns = []
+        }
+        if container.contains(.tasks) {
+            tasks = try container.decode([BoardTask].self, forKey: .tasks)
+        } else {
+            tasks = []
+        }
     }
 }
 
@@ -383,24 +455,62 @@ extension BoardStore {
         let persistenceURL = applicationSupport
             .appendingPathComponent("Boardly", isDirectory: true)
             .appendingPathComponent("board.json")
+        return load(persistenceURL: persistenceURL)
+    }
 
-        if let data = try? Data(contentsOf: persistenceURL),
-           let snapshot = try? decodeSnapshot(data) {
+    /// 从磁盘加载。旧版数据升级前、以及任何解码失败（畸形/未来版本）时，
+    /// 都先把原始字节复制为旁路备份，保证真实快照永远可以找回、不会被静默覆盖。
+    /// 解码失败时以默认列 + 空集合启动（不以示例数据冒充用户数据），后续写入发生在备份之后。
+    static func load(persistenceURL: URL) -> BoardStore {
+        guard let data = try? Data(contentsOf: persistenceURL) else {
+            let seed = preview
             return BoardStore(
-                projects: snapshot.projects,
-                columns: snapshot.columns,
-                tasks: snapshot.tasks,
+                projects: seed.projects,
+                columns: seed.columns,
+                tasks: seed.tasks,
                 persistenceURL: persistenceURL
             )
         }
 
-        let seed = preview
-        return BoardStore(
-            projects: seed.projects,
-            columns: seed.columns,
-            tasks: seed.tasks,
-            persistenceURL: persistenceURL
-        )
+        do {
+            let decoded = try decodeSnapshot(data)
+            if decoded.schemaVersion < StoreSnapshot.currentSchemaVersion {
+                writeBackup(data, nextTo: persistenceURL, label: "v\(decoded.schemaVersion)-migration")
+            }
+            return BoardStore(
+                projects: decoded.projects,
+                columns: decoded.columns,
+                tasks: decoded.tasks,
+                persistenceURL: persistenceURL
+            )
+        } catch {
+            writeBackup(data, nextTo: persistenceURL, label: "recovery")
+            return BoardStore(persistenceURL: persistenceURL)
+        }
+    }
+
+    /// 把原始字节复制为 `board.json.<label>.backup`；recovery 备份附时间戳避免覆盖历史备份。
+    /// 返回备份文件 URL；备份失败不打断加载（原始文件本身未被改动）。
+    @discardableResult
+    nonisolated static func writeBackup(_ data: Data, nextTo url: URL, label: String) -> URL? {
+        var fileName = "\(url.lastPathComponent).\(label).backup"
+        if label == "recovery" {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            fileName = "\(url.lastPathComponent).\(label)-\(formatter.string(from: Date())).backup"
+        }
+        let backupURL = url.deletingLastPathComponent().appendingPathComponent(fileName)
+        do {
+            try FileManager.default.createDirectory(
+                at: backupURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: backupURL, options: .atomic)
+            return backupURL
+        } catch {
+            return nil
+        }
     }
 
     static var preview: BoardStore {

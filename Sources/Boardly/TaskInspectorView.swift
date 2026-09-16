@@ -35,7 +35,7 @@ struct TaskInspectorView: View {
 
                     BoardlyFormSection("组织") {
                         BoardlyFormRow(label: "列") {
-                            Picker("列", selection: $task.columnID) {
+                            Picker("列", selection: columnBinding) {
                                 ForEach(store.orderedColumns) { column in
                                     Label(column.name, systemImage: column.symbol).tag(column.id)
                                 }
@@ -112,6 +112,21 @@ struct TaskInspectorView: View {
             .accessibilityLabel("关闭任务详情")
         }
         .padding(16)
+    }
+
+    /// 列变更必须走 store.moveTask：目标列尾追加、源列重排，
+    /// 直接改 columnID 会绕过排序整理、留下重复 sortOrder。其余字段仍走 updateTask。
+    private var columnBinding: Binding<BoardColumn.ID> {
+        Binding(
+            get: { task.columnID },
+            set: { newColumnID in
+                guard newColumnID != task.columnID else { return }
+                store.moveTask(id: task.id, to: newColumnID)
+                if let updated = store.task(withID: task.id) {
+                    task = updated
+                }
+            }
+        )
     }
 
     private var dueDateEnabled: Binding<Bool> {
