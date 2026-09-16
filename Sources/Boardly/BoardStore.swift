@@ -360,19 +360,27 @@ final class BoardStore: ObservableObject {
         var schemaVersion: Int
     }
 
-    /// 解码快照并做安全回收：缺列时补默认列（旧版迁移）；没有任何完成列时把末列
-    /// 恢复为完成列（保证侧栏计数/置灰语义可用）；任务引用的列不存在时归入首列。
-    /// 字段缺失按空集合/默认值兼容，字段存在但格式错误会抛出——绝不静默丢弃整个集合。
-    /// 供加载与单元测试共用。
+    /// 解码快照并做安全回收：v1 缺列时补默认列（旧版迁移）；没有任何完成列时
+    /// 恢复已知默认完成列或追加独立“已完成”列（不改写任何现有列的语义）；
+    /// 任务引用的列不存在时归入首列。字段缺失按空集合/默认值兼容（仅限 v1），
+    /// 字段存在但格式错误会抛出——绝不静默丢弃整个集合。供加载与单元测试共用。
     nonisolated static func decodeSnapshot(_ data: Data) throws -> DecodedSnapshot {
         let snapshot = try JSONDecoder().decode(StoreSnapshot.self, from: data)
         var columns = normalized(snapshot.columns)
         if !columns.contains(where: \.isDone) {
-            let ordered = columns.sorted {
-                $0.sortOrder == $1.sortOrder ? $0.id.uuidString < $1.id.uuidString : $0.sortOrder < $1.sortOrder
-            }
-            if let last = ordered.last, let index = columns.firstIndex(where: { $0.id == last.id }) {
-                columns[index].isDone = true
+            // 不改写任何现有列的语义：优先恢复已知默认完成列；
+            // 否则追加一个独立的“已完成”列，保留全部自定义列与其任务的未完成语义。
+            if let doneIndex = columns.firstIndex(where: { $0.id == DefaultColumns.doneID }) {
+                columns[doneIndex].isDone = true
+            } else {
+                columns.append(BoardColumn(
+                    id: DefaultColumns.doneID,
+                    name: "已完成",
+                    symbol: "checkmark.circle.fill",
+                    colorName: "green",
+                    sortOrder: (columns.map(\.sortOrder).max() ?? -1) + 1,
+                    isDone: true
+                ))
             }
         }
         let fallback = columns.min {
@@ -426,22 +434,28 @@ private struct StoreSnapshot: Codable {
             ))
         }
         schemaVersion = version
-        // 字段缺失视为空集合/旧版布局；字段存在但格式错误必须抛出，绝不静默丢集合。
-        if container.contains(.projects) {
+        if version >= 2 {
+            // v2 起三个集合键均为必需：缺任一键直接抛错，绝不降级为空集合后让保存覆盖原数据。
             projects = try container.decode([Project].self, forKey: .projects)
-        } else {
-            projects = []
-        }
-        if container.contains(.columns) {
             columns = try container.decode([BoardColumn].self, forKey: .columns)
-        } else {
-            // 旧版（v1）没有 columns：由 decodeSnapshot 补默认四列并按 status 迁移任务。
-            columns = []
-        }
-        if container.contains(.tasks) {
             tasks = try container.decode([BoardTask].self, forKey: .tasks)
         } else {
-            tasks = []
+            // v1：只有 columns 允许缺失（触发旧版迁移补默认列）；projects/tasks 缺失视为空集合。
+            if container.contains(.projects) {
+                projects = try container.decode([Project].self, forKey: .projects)
+            } else {
+                projects = []
+            }
+            if container.contains(.columns) {
+                columns = try container.decode([BoardColumn].self, forKey: .columns)
+            } else {
+                columns = []
+            }
+            if container.contains(.tasks) {
+                tasks = try container.decode([BoardTask].self, forKey: .tasks)
+            } else {
+                tasks = []
+            }
         }
     }
 }
