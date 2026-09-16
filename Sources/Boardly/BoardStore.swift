@@ -474,7 +474,9 @@ extension BoardStore {
 
     /// 从磁盘加载。旧版数据升级前、以及任何解码失败（畸形/未来版本）时，
     /// 都先把原始字节复制为旁路备份，保证真实快照永远可以找回、不会被静默覆盖。
-    /// 解码失败时以默认列 + 空集合启动（不以示例数据冒充用户数据），后续写入发生在备份之后。
+    /// 解码失败时以默认列 + 空集合启动（不以示例数据冒充用户数据）。
+    /// 备份写入失败时走安全失败路径：返回不绑定原文件的内存 store（persistenceURL = nil），
+    /// 后续任何修改都不会落盘覆盖原 board.json。
     static func load(persistenceURL: URL) -> BoardStore {
         guard let data = try? Data(contentsOf: persistenceURL) else {
             let seed = preview
@@ -489,7 +491,15 @@ extension BoardStore {
         do {
             let decoded = try decodeSnapshot(data)
             if decoded.schemaVersion < StoreSnapshot.currentSchemaVersion {
-                writeBackup(data, nextTo: persistenceURL, label: "v\(decoded.schemaVersion)-migration")
+                if writeBackup(data, nextTo: persistenceURL, label: "v\(decoded.schemaVersion)-migration") == nil {
+                    // 备份失败：数据可用但仅存内存，绝不让首次写入覆盖未备份的原始文件。
+                    return BoardStore(
+                        projects: decoded.projects,
+                        columns: decoded.columns,
+                        tasks: decoded.tasks,
+                        persistenceURL: nil
+                    )
+                }
             }
             return BoardStore(
                 projects: decoded.projects,
@@ -498,23 +508,20 @@ extension BoardStore {
                 persistenceURL: persistenceURL
             )
         } catch {
-            writeBackup(data, nextTo: persistenceURL, label: "recovery")
+            if writeBackup(data, nextTo: persistenceURL, label: "recovery") == nil {
+                return BoardStore(persistenceURL: nil)
+            }
             return BoardStore(persistenceURL: persistenceURL)
         }
     }
 
-    /// 把原始字节复制为 `board.json.<label>.backup`；recovery 备份附时间戳避免覆盖历史备份。
-    /// 返回备份文件 URL；备份失败不打断加载（原始文件本身未被改动）。
+    /// 把原始字节复制为 `board.json.<label>.backup`；recovery 备份附 UUID 避免覆盖历史备份。
+    /// 返回备份文件 URL；失败返回 nil，由调用方决定安全失败路径。
     @discardableResult
     nonisolated static func writeBackup(_ data: Data, nextTo url: URL, label: String) -> URL? {
-        var fileName = "\(url.lastPathComponent).\(label).backup"
-        if label == "recovery" {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyyMMdd-HHmmss"
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            fileName = "\(url.lastPathComponent).\(label)-\(formatter.string(from: Date())).backup"
-        }
-        let backupURL = url.deletingLastPathComponent().appendingPathComponent(fileName)
+        let unique = label == "recovery" ? "-\(UUID().uuidString)" : ""
+        let backupURL = url.deletingLastPathComponent()
+            .appendingPathComponent("\(url.lastPathComponent).\(label)\(unique).backup")
         do {
             try FileManager.default.createDirectory(
                 at: backupURL.deletingLastPathComponent(),
