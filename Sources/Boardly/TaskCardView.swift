@@ -14,6 +14,7 @@ struct TaskCardView: View {
     @State private var gripTranslation = CGSize.zero
 
     private var isSelected: Bool { store.selectedTaskID == task.id }
+    private var isInDoneColumn: Bool { store.isDoneColumn(task.columnID) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -21,7 +22,7 @@ struct TaskCardView: View {
 
             Text(task.title)
                 .font(.body.weight(.medium))
-                .foregroundStyle(task.status == .done ? Color.secondary : Color.primary)
+                .foregroundStyle(isInDoneColumn ? Color.secondary : Color.primary)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -80,7 +81,7 @@ struct TaskCardView: View {
             TaskDropHandler.handle(
                 payloads,
                 store: store,
-                to: task.status,
+                to: task.columnID,
                 before: task.id
             )
         } isTargeted: { targeted in
@@ -90,7 +91,7 @@ struct TaskCardView: View {
         .contextMenu { moveMenuItems }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
-        .accessibilityHint("点按打开详情。可从卡片任意区域拖动（左上角抓取指示），或使用移动菜单调整状态。")
+        .accessibilityHint("点按打开详情。可从卡片任意区域拖动（左上角抓取指示），或使用移动菜单调整列。")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { store.selectedTaskID = task.id }
     }
@@ -141,15 +142,15 @@ struct TaskCardView: View {
     private func applyDirectGrip(translation: CGSize) {
         guard let plan = DirectGripPlanner.plan(
             taskID: task.id,
-            source: task.status,
-            orderedIDs: store.tasks(in: task.status).map(\.id),
+            sourceColumnID: task.columnID,
+            orderedIDs: store.tasks(in: task.columnID).map(\.id),
             translation: translation,
             columnAnchors: columnAnchors
         ) else { return }
-        store.moveTask(id: task.id, to: plan.status, before: plan.before)
+        store.moveTask(id: task.id, to: plan.columnID, before: plan.before)
     }
 
-    /// 无需拖放的状态移动菜单：满足键盘、VoiceOver 与触控板之外的可靠退路。
+    /// 无需拖放的列移动菜单：满足键盘、VoiceOver 与触控板之外的可靠退路。
     private var moveMenu: some View {
         Menu {
             moveMenuItems
@@ -163,19 +164,19 @@ struct TaskCardView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .accessibilityLabel("移动任务菜单")
-        .accessibilityHint("打开后可将任务移动到任意状态，无需拖放。")
+        .accessibilityHint("打开后可将任务移动到任意列，无需拖放。")
     }
 
     @ViewBuilder
     private var moveMenuItems: some View {
         Section("移动到") {
-            ForEach(TaskStatus.allCases) { status in
+            ForEach(store.orderedColumns) { column in
                 Button {
-                    store.moveTask(id: task.id, to: status)
+                    store.moveTask(id: task.id, to: column.id)
                 } label: {
-                    Label(status.title, systemImage: status.systemImage)
+                    Label(column.name, systemImage: column.symbol)
                 }
-                .disabled(status == task.status)
+                .disabled(column.id == task.columnID)
             }
         }
         Button(role: .destructive) {
@@ -215,8 +216,8 @@ struct TaskCardView: View {
                     Image(systemName: "calendar")
                 }
                 .foregroundStyle(
-                    Calendar.current.isDateInToday(dueDate) || (dueDate < .now && task.status != .done)
-                        ? BoardlyTheme.statusColor(.inProgress)
+                    Calendar.current.isDateInToday(dueDate) || (dueDate < .now && !isInDoneColumn)
+                        ? BoardlyTheme.projectColor(named: "amber")
                         : Color.secondary
                 )
             }
@@ -233,7 +234,9 @@ struct TaskCardView: View {
     }
 
     private var accessibilitySummary: String {
-        var parts = [task.title, "状态：\(task.status.title)", "优先级：\(task.priority.title)"]
+        var parts = [task.title]
+        if let column = store.column(withID: task.columnID) { parts.append("列：\(column.name)") }
+        parts.append("优先级：\(task.priority.title)")
         if let project = store.project(withID: task.projectID) { parts.append("项目：\(project.name)") }
         if let dueDate = task.dueDate {
             parts.append("截止日期：\(dueDate.formatted(date: .long, time: .omitted))")
@@ -254,7 +257,7 @@ enum DirectGripPlanner {
 
     /// 一列在看板命名坐标空间中的实时几何。
     struct ColumnAnchor: Equatable {
-        let status: TaskStatus
+        let columnID: BoardColumn.ID
         let frame: CGRect
 
         var center: CGFloat { frame.midX }
@@ -266,21 +269,21 @@ enum DirectGripPlanner {
     }
 
     struct Plan: Equatable {
-        let status: TaskStatus
+        let columnID: BoardColumn.ID
         let before: BoardTask.ID?
     }
 
     /// 返回 nil 表示本次拖动不产生移动（几何缺失、位移过小、首行上移、尾行下移或未知任务）。
     static func plan(
         taskID: BoardTask.ID,
-        source: TaskStatus,
+        sourceColumnID: BoardColumn.ID,
         orderedIDs: [BoardTask.ID],
         translation: CGSize,
         columnAnchors: [ColumnAnchor],
         verticalThreshold: CGFloat = DirectGripPlanner.verticalThreshold
     ) -> Plan? {
         guard let sourceIndex = orderedIDs.firstIndex(of: taskID) else { return nil }
-        guard let sourceAnchor = columnAnchors.first(where: { $0.status == source }) else { return nil }
+        guard let sourceAnchor = columnAnchors.first(where: { $0.columnID == sourceColumnID }) else { return nil }
 
         // 实际落点 X：源列实时中心 + 水平位移（几何随窗口缩放/侧栏变化自动适配）。
         let targetX = sourceAnchor.center + translation.width
@@ -298,21 +301,21 @@ enum DirectGripPlanner {
         }
 
         // 跨列：追加到目标列列尾（空列同样成立）。
-        if target.status != source {
-            return Plan(status: target.status, before: nil)
+        if target.columnID != sourceColumnID {
+            return Plan(columnID: target.columnID, before: nil)
         }
 
         // 水平位移不足：按垂直方向同列上移/下移一位。
         if translation.height <= -verticalThreshold {
             guard sourceIndex > 0 else { return nil } // 已是列首
-            return Plan(status: source, before: orderedIDs[sourceIndex - 1])
+            return Plan(columnID: sourceColumnID, before: orderedIDs[sourceIndex - 1])
         }
         if translation.height >= verticalThreshold {
             guard sourceIndex < orderedIDs.count - 1 else { return nil } // 已是列尾
             // 下移一位 = 插入到“下下张”之前；没有下下张则追加列尾。
             let afterNext = sourceIndex + 2
             let before = afterNext < orderedIDs.count ? orderedIDs[afterNext] : nil
-            return Plan(status: source, before: before)
+            return Plan(columnID: sourceColumnID, before: before)
         }
         return nil
     }
@@ -340,13 +343,13 @@ enum TaskDropHandler {
     static func handle(
         _ payloads: [TaskDragPayload],
         store: BoardStore,
-        to status: TaskStatus,
+        to columnID: BoardColumn.ID,
         before destinationID: BoardTask.ID?
     ) -> Bool {
         guard let payload = payloads.first, payload.taskID != destinationID else {
             return false
         }
-        store.moveTask(id: payload.taskID, to: status, before: destinationID)
+        store.moveTask(id: payload.taskID, to: columnID, before: destinationID)
         return true
     }
 }

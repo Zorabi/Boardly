@@ -114,13 +114,15 @@ struct SidebarView: View {
     }
 
     private var inboxCount: Int {
-        store.tasks.filter { $0.projectID == nil && $0.status != .done }.count
+        let doneColumns = store.doneColumnIDs
+        return store.tasks.filter { $0.projectID == nil && !doneColumns.contains($0.columnID) }.count
     }
 
     private var todayCount: Int {
-        store.tasks.filter { task in
+        let doneColumns = store.doneColumnIDs
+        return store.tasks.filter { task in
             guard let date = task.dueDate else { return false }
-            return Calendar.current.isDateInToday(date) && task.status != .done
+            return Calendar.current.isDateInToday(date) && !doneColumns.contains(task.columnID)
         }.count
     }
 }

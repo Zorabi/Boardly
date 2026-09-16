@@ -10,11 +10,11 @@ enum BoardCoordinateSpace {
 /// 以纯数据向下传递，读取仅在布局阶段发生，不触发持久化。
 struct BoardColumnFramesPreferenceKey: PreferenceKey {
     // computed var 保证 Swift 6 并发安全（无共享可变全局状态）。
-    static var defaultValue: [TaskStatus: CGRect] { [:] }
+    static var defaultValue: [BoardColumn.ID: CGRect] { [:] }
 
-    static func reduce(value: inout [TaskStatus: CGRect], nextValue: () -> [TaskStatus: CGRect]) {
-        for (status, frame) in nextValue() where value[status] == nil {
-            value[status] = frame
+    static func reduce(value: inout [BoardColumn.ID: CGRect], nextValue: () -> [BoardColumn.ID: CGRect]) {
+        for (columnID, frame) in nextValue() where value[columnID] == nil {
+            value[columnID] = frame
         }
     }
 }
@@ -22,20 +22,23 @@ struct BoardColumnFramesPreferenceKey: PreferenceKey {
 struct BoardView: View {
     @EnvironmentObject private var store: BoardStore
     let searchText: String
-    let onCreateTask: (TaskStatus) -> Void
+    let onCreateTask: (BoardColumn.ID) -> Void
 
     /// 列实时几何（命名坐标空间），随窗口/布局变化被动更新。
-    @State private var columnFrames: [TaskStatus: CGRect] = [:]
+    @State private var columnFrames: [BoardColumn.ID: CGRect] = [:]
+    @State private var isNewColumnPresented = false
+    @State private var editingColumn: BoardColumn?
+    @State private var deletingColumn: BoardColumn?
 
     private var visibleTaskCount: Int {
-        TaskStatus.allCases.reduce(0) { result, status in
-            result + store.tasks(in: status, matching: searchText).count
+        store.orderedColumns.reduce(0) { result, column in
+            result + store.tasks(in: column.id, matching: searchText).count
         }
     }
 
     private var columnAnchors: [DirectGripPlanner.ColumnAnchor] {
-        TaskStatus.allCases.compactMap { status in
-            columnFrames[status].map { DirectGripPlanner.ColumnAnchor(status: status, frame: $0) }
+        store.orderedColumns.compactMap { column in
+            columnFrames[column.id].map { DirectGripPlanner.ColumnAnchor(columnID: column.id, frame: $0) }
         }
     }
 
@@ -47,16 +50,20 @@ struct BoardView: View {
             } else {
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 12) {
-                        ForEach(TaskStatus.allCases) { status in
+                        ForEach(store.orderedColumns) { column in
                             TaskColumnView(
-                                status: status,
+                                column: column,
                                 searchText: searchText,
                                 onCreateTask: onCreateTask,
+                                onRename: { editingColumn = column },
+                                onDelete: { deletingColumn = column },
                                 columnAnchors: columnAnchors
                             )
                             .frame(width: 280)
                             .containerRelativeFrame(.vertical)
                         }
+
+                        addColumnPanel
                     }
                     .padding(16)
                     .coordinateSpace(name: BoardCoordinateSpace.name)
@@ -66,21 +73,76 @@ struct BoardView: View {
                 .onPreferenceChange(BoardColumnFramesPreferenceKey.self) { frames in
                     columnFrames = frames
                 }
+                .sheet(isPresented: $isNewColumnPresented) {
+                    NewColumnSheet()
+                        .environmentObject(store)
+                }
+                .sheet(item: $editingColumn) { column in
+                    ColumnEditorSheet(column: column)
+                        .environmentObject(store)
+                }
+                .sheet(item: $deletingColumn) { column in
+                    ColumnDeleteSheet(column: column)
+                        .environmentObject(store)
+                }
             }
         }
+    }
+
+    /// 看板尾部的“新增列”入口：满足“测试中”“验证中”等自定义状态的创建。
+    private var addColumnPanel: some View {
+        Button {
+            isNewColumnPresented = true
+        } label: {
+            VStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .medium))
+                Text("新增列")
+                    .font(.caption.weight(.medium))
+            }
+            .foregroundStyle(.secondary)
+            .frame(width: 120)
+            .frame(maxHeight: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous)
+                    .fill(BoardlyTheme.column.opacity(0.5))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous)
+                    .strokeBorder(BoardlyTheme.border, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("新增看板列")
+        .accessibilityHint("创建自定义状态列，例如“测试中”或“验证中”")
     }
 }
 
 private struct TaskColumnView: View {
     @EnvironmentObject private var store: BoardStore
-    let status: TaskStatus
+    let column: BoardColumn
     let searchText: String
-    let onCreateTask: (TaskStatus) -> Void
+    let onCreateTask: (BoardColumn.ID) -> Void
+    let onRename: () -> Void
+    let onDelete: () -> Void
     let columnAnchors: [DirectGripPlanner.ColumnAnchor]
     @State private var isDropTarget = false
 
     private var tasks: [BoardTask] {
-        store.tasks(in: status, matching: searchText)
+        store.tasks(in: column.id, matching: searchText)
+    }
+
+    private var leftNeighbor: BoardColumn? {
+        let ordered = store.orderedColumns
+        guard let index = ordered.firstIndex(where: { $0.id == column.id }), index > 0 else { return nil }
+        return ordered[index - 1]
+    }
+
+    private var rightNeighbor: BoardColumn? {
+        let ordered = store.orderedColumns
+        guard let index = ordered.firstIndex(where: { $0.id == column.id }),
+              index + 1 < ordered.count else { return nil }
+        return ordered[index + 1]
     }
 
     var body: some View {
@@ -116,27 +178,27 @@ private struct TaskColumnView: View {
             GeometryReader { geo in
                 Color.clear.preference(
                     key: BoardColumnFramesPreferenceKey.self,
-                    value: [status: geo.frame(in: .named(BoardCoordinateSpace.name))]
+                    value: [column.id: geo.frame(in: .named(BoardCoordinateSpace.name))]
                 )
             }
         )
         // 列级落点：追加到列尾；空列同样生效。列内精确位置由卡片上的 dropDestination 处理。
         .dropDestination(for: TaskDragPayload.self) { payloads, _ in
-            TaskDropHandler.handle(payloads, store: store, to: status, before: nil)
+            TaskDropHandler.handle(payloads, store: store, to: column.id, before: nil)
         } isTargeted: { targeted in
             isDropTarget = targeted
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(status.title)列，\(tasks.count)个任务")
+        .accessibilityLabel("\(column.name)列，\(tasks.count)个任务")
     }
 
     private var columnHeader: some View {
         HStack(spacing: 8) {
-            Image(systemName: status.systemImage)
+            Image(systemName: column.symbol)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(BoardlyTheme.statusColor(status))
+                .foregroundStyle(BoardlyTheme.projectColor(named: column.colorName))
                 .accessibilityHidden(true)
-            Text(status.title)
+            Text(column.name)
                 .font(.subheadline.weight(.semibold))
             Text(tasks.count, format: .number)
                 .font(.caption.monospacedDigit())
@@ -148,16 +210,38 @@ private struct TaskColumnView: View {
             Spacer(minLength: 4)
 
             Button {
-                onCreateTask(status)
+                onCreateTask(column.id)
             } label: {
                 Image(systemName: "plus")
             }
             .buttonStyle(BoardlyIconButtonStyle())
-            .help("在“\(status.title)”列新建任务")
-            .accessibilityLabel("在\(status.title)列新建任务")
+            .help("在“\(column.name)”列新建任务")
+            .accessibilityLabel("在\(column.name)列新建任务")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .contextMenu {
+            Button(action: onRename) {
+                Label("重命名列…", systemImage: "pencil")
+            }
+            Button {
+                store.moveColumn(id: column.id, before: leftNeighbor?.id)
+            } label: {
+                Label("左移列", systemImage: "arrow.left")
+            }
+            .disabled(leftNeighbor == nil)
+            Button {
+                store.moveColumn(id: column.id, before: rightNeighbor.map { $0.id } ?? nil)
+            } label: {
+                Label("右移列", systemImage: "arrow.right")
+            }
+            .disabled(rightNeighbor == nil)
+            Divider()
+            Button(role: .destructive, action: onDelete) {
+                Label("删除列…", systemImage: "trash")
+            }
+            .disabled(store.columns.count <= 1)
+        }
     }
 
     private var emptyState: some View {
@@ -170,7 +254,7 @@ private struct TaskColumnView: View {
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
             Button {
-                onCreateTask(status)
+                onCreateTask(column.id)
             } label: {
                 Label("新建任务", systemImage: "plus")
                     .font(.caption.weight(.medium))

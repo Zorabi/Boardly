@@ -32,10 +32,10 @@ struct BoardWorkspaceView: View {
     @State private var isInspectorPresented = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
-    /// 携带目标状态的新建任务上下文：从工具栏进入默认“待办”，从列头进入则预填该列状态。
+    /// 携带目标列的新建任务上下文：从工具栏进入默认首列，从列头进入则预填该列。
     struct NewTaskContext: Identifiable {
-        let status: TaskStatus
-        var id: String { status.rawValue }
+        let columnID: BoardColumn.ID?
+        var id: String { columnID?.uuidString ?? "default" }
     }
 
     var body: some View {
@@ -43,8 +43,8 @@ struct BoardWorkspaceView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
-            BoardView(searchText: searchText) { status in
-                newTaskContext = NewTaskContext(status: status)
+            BoardView(searchText: searchText) { columnID in
+                newTaskContext = NewTaskContext(columnID: columnID)
             }
             .navigationTitle(store.selectedScopeTitle)
         }
@@ -52,7 +52,7 @@ struct BoardWorkspaceView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    newTaskContext = NewTaskContext(status: .todo)
+                    newTaskContext = NewTaskContext(columnID: nil)
                 } label: {
                     Label("新建任务", systemImage: "plus")
                 }
@@ -74,7 +74,7 @@ struct BoardWorkspaceView: View {
                 .inspectorColumnWidth(min: 280, ideal: 320, max: 420)
         }
         .sheet(item: $newTaskContext) { context in
-            NewTaskSheet(initialStatus: context.status)
+            NewTaskSheet(initialColumnID: context.columnID)
                 .environmentObject(store)
         }
         .onChange(of: store.selectedTaskID) { _, selectedTaskID in

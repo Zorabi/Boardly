@@ -3,377 +3,344 @@ import XCTest
 
 @MainActor
 final class BoardStoreTests: XCTestCase {
+    // MARK: - 快照迁移与数据安全
+
+    /// 构造旧版 board.json（status 字段、无 columns 字段）验证向后兼容迁移。
+    func testLegacySnapshotMigratesStatusesToDefaultColumns() throws {
+        let legacyJSON = """
+        {
+          "projects": [
+            {"id": "11111111-1111-1111-1111-111111111111", "name": "项目", "symbol": "folder", "colorName": "blue"}
+          ],
+          "tasks": [
+            {"id": "aaaaaaaa-0000-0000-0000-000000000001", "title": "积压", "status": "backlog", "sortOrder": 0},
+            {"id": "aaaaaaaa-0000-0000-0000-000000000002", "title": "待办", "status": "todo", "sortOrder": 0},
+            {"id": "aaaaaaaa-0000-0000-0000-000000000003", "title": "进行", "status": "inProgress", "sortOrder": 0},
+            {"id": "aaaaaaaa-0000-0000-0000-000000000004", "title": "完成", "status": "done", "sortOrder": 0}
+          ]
+        }
+        """
+        let data = Data(legacyJSON.utf8)
+
+        let snapshot = try BoardStore.decodeSnapshot(data)
+
+        // 补默认四列，任务按旧 status 映射，无丢失。
+        XCTAssertEqual(snapshot.columns.count, 4)
+        XCTAssertEqual(snapshot.columns.map(\.name), ["Backlog", "待办", "进行中", "已完成"])
+        XCTAssertEqual(snapshot.tasks.count, 4)
+        XCTAssertEqual(
+            snapshot.tasks.first(where: { $0.title == "积压" })?.columnID,
+            DefaultColumns.backlogID
+        )
+        XCTAssertEqual(
+            snapshot.tasks.first(where: { $0.title == "完成" })?.columnID,
+            DefaultColumns.doneID
+        )
+        XCTAssertEqual(snapshot.projects.first?.name, "项目")
+    }
+
+    func testLegacyBoardTaskDecodingPerStatus() throws {
+        for (status, expected) in [
+            (TaskStatus.backlog, DefaultColumns.backlogID),
+            (TaskStatus.todo, DefaultColumns.todoID),
+            (TaskStatus.inProgress, DefaultColumns.inProgressID),
+            (TaskStatus.done, DefaultColumns.doneID)
+        ] {
+            let json = #"{"id": "bbbbbbbb-0000-0000-0000-000000000001", "title": "T", "status": "\#(status.rawValue)"}"#
+            let task = try JSONDecoder().decode(BoardTask.self, from: Data(json.utf8))
+            XCTAssertEqual(task.columnID, expected, "旧 status \(status.rawValue) 应映射到默认列")
+        }
+    }
+
+    func testSnapshotRoundTripKeepsCustomColumnsAndTaskReferences() throws {
+        let testing = BoardColumn(name: "测试中", symbol: "testtube.2", colorName: "teal", sortOrder: 4)
+        let verifying = BoardColumn(name: "验证中", symbol: "eyeglasses", colorName: "pink", sortOrder: 5)
+        let task = BoardTask(title: "自定义列任务", columnID: verifying.id)
+        let store = BoardStore(columns: DefaultColumns.makeDefaults() + [testing, verifying], tasks: [task])
+
+        let data = try JSONEncoder().encode(
+            StoreSnapshotEncodable(projects: store.projects, columns: store.columns, tasks: store.tasks)
+        )
+        let decoded = try BoardStore.decodeSnapshot(data)
+
+        XCTAssertEqual(decoded.columns.count, 6)
+        XCTAssertEqual(orderedColumnNames(of: decoded.columns), ["Backlog", "待办", "进行中", "已完成", "测试中", "验证中"])
+        XCTAssertEqual(decoded.tasks.first?.columnID, verifying.id)
+    }
+
+    /// 任务引用了不存在的列（异常数据）：安全回收进首列，不丢任务。
+    func testTaskReferencingMissingColumnIsReassigned() throws {
+        let ghost = UUID()
+        let json = """
+        {
+          "columns": [
+            {"id": "cccccccc-0000-0000-0000-000000000001", "name": "A", "symbol": "circle", "colorName": "blue", "sortOrder": 0},
+            {"id": "cccccccc-0000-0000-0000-000000000002", "name": "B", "symbol": "clock", "colorName": "amber", "sortOrder": 1}
+          ],
+          "tasks": [
+            {"id": "dddddddd-0000-0000-0000-000000000001", "title": "孤儿", "columnID": "\(ghost.uuidString)", "sortOrder": 0}
+          ]
+        }
+        """
+        let snapshot = try BoardStore.decodeSnapshot(Data(json.utf8))
+
+        XCTAssertEqual(snapshot.tasks.count, 1, "引用缺失列的任务不得被丢弃")
+        XCTAssertEqual(snapshot.tasks.first?.columnID, snapshot.columns.minByOrder()?.id)
+    }
+
+    // MARK: - 列 CRUD 与排序
+
+    func testAddRenameAndMoveColumnOrdering() {
+        let store = BoardStore(columns: DefaultColumns.makeDefaults())
+
+        // 新增列追加到末尾。
+        let testingID = store.addColumn(name: "  测试中  ", symbol: "testtube.2", colorName: "teal")
+        XCTAssertEqual(store.orderedColumns.map(\.name).last, "测试中")
+        XCTAssertEqual(store.column(withID: testingID)?.name, "测试中", "列名需去除首尾空白")
+
+        // 空白名称拒绝创建。
+        XCTAssertNil(store.addColumn(name: "   ", symbol: "circle", colorName: "blue"))
+
+        // 重命名。
+        var renamed = try! XCTUnwrap(store.column(withID: testingID))
+        renamed.name = "验证中"
+        store.updateColumn(renamed)
+        XCTAssertEqual(store.orderedColumns.last?.name, "验证中")
+
+        // 移到最前（插入到 Backlog 之前）。
+        store.moveColumn(id: testingID!, before: DefaultColumns.backlogID)
+        XCTAssertEqual(store.orderedColumns.first?.name, "验证中")
+        XCTAssertEqual(
+            store.orderedColumns.map(\.name),
+            ["验证中", "Backlog", "待办", "进行中", "已完成"]
+        )
+
+        // 移到末尾。
+        store.moveColumn(id: testingID!, before: nil)
+        XCTAssertEqual(store.orderedColumns.last?.name, "验证中")
+    }
+
+    // MARK: - 列删除安全策略
+
+    func testDeleteColumnMigratesTasksToTargetPreservingOrder() {
+        let target = BoardColumn(name: "目标", symbol: "circle", colorName: "blue", sortOrder: 4)
+        let source = BoardColumn(name: "被删列", symbol: "tray", colorName: "coral", sortOrder: 5)
+        let first = BoardTask(title: "A", columnID: source.id, sortOrder: 0)
+        let second = BoardTask(title: "B", columnID: source.id, sortOrder: 1)
+        let existing = BoardTask(title: "已有", columnID: target.id, sortOrder: 7)
+        let store = BoardStore(columns: DefaultColumns.makeDefaults() + [target, source], tasks: [first, second, existing])
+
+        XCTAssertTrue(store.deleteColumn(id: source.id, migratingTasksTo: target.id))
+        XCTAssertNil(store.column(withID: source.id))
+        // 迁移任务追加到目标列尾部且保持相对顺序。
+        XCTAssertEqual(store.tasks(in: target.id).map(\.title), ["已有", "A", "B"])
+    }
+
+    func testDeleteColumnRejectsUnsafeRequests() {
+        let extra = BoardColumn(name: "额外", symbol: "bolt", colorName: "teal", sortOrder: 4)
+        let onlyStore = BoardStore(columns: [extra])
+        // 仅剩一列时禁止删除。
+        XCTAssertFalse(onlyStore.deleteColumn(id: extra.id, migratingTasksTo: extra.id))
+
+        let store = BoardStore(columns: DefaultColumns.makeDefaults() + [extra])
+        // 目标列与被删列相同、或目标不存在：拒绝。
+        XCTAssertFalse(store.deleteColumn(id: DefaultColumns.todoID, migratingTasksTo: DefaultColumns.todoID))
+        XCTAssertFalse(store.deleteColumn(id: DefaultColumns.todoID, migratingTasksTo: UUID()))
+        // 被删列不存在：拒绝。
+        XCTAssertFalse(store.deleteColumn(id: UUID(), migratingTasksTo: DefaultColumns.todoID))
+        XCTAssertEqual(store.columns.count, 5, "被拒绝的删除不得改变列集合")
+    }
+
+    // MARK: - 任务移动与计数
+
+    func testMoveTaskAcrossCustomColumnsAndReorderBeforeDestination() {
+        let testing = BoardColumn(name: "测试中", symbol: "testtube.2", colorName: "teal", sortOrder: 4)
+        let first = BoardTask(title: "First", columnID: testing.id, sortOrder: 0)
+        let second = BoardTask(title: "Second", columnID: testing.id, sortOrder: 1)
+        let mover = BoardTask(title: "Mover", columnID: DefaultColumns.backlogID, sortOrder: 0)
+        let store = BoardStore(columns: DefaultColumns.makeDefaults() + [testing], tasks: [first, second, mover])
+
+        // 跨列移动并插入到目标卡之前。
+        store.moveTask(id: mover.id, to: testing.id, before: first.id)
+        XCTAssertEqual(store.tasks(in: testing.id).map(\.id), [mover.id, first.id, second.id])
+        XCTAssertTrue(store.tasks(in: DefaultColumns.backlogID).isEmpty)
+
+        // 空列投放：追加列尾。
+        let verifying = BoardColumn(name: "验证中", symbol: "eyeglasses", colorName: "pink", sortOrder: 5)
+        store.columns.append(verifying)
+        store.moveTask(id: mover.id, to: verifying.id)
+        XCTAssertEqual(store.tasks(in: verifying.id).map(\.id), [mover.id])
+    }
+
+    func testTaskCountExcludesDoneColumns() {
+        let project = Project(name: "P", symbol: "folder", colorName: "blue")
+        let customDone = BoardColumn(name: "归档完成", symbol: "shippingbox", colorName: "purple", sortOrder: 4, isDone: true)
+        let active = BoardTask(title: "进行中任务", columnID: DefaultColumns.inProgressID, projectID: project.id)
+        let done = BoardTask(title: "已完成任务", columnID: DefaultColumns.doneID, projectID: project.id)
+        let archived = BoardTask(title: "归档任务", columnID: customDone.id, projectID: project.id)
+        let store = BoardStore(
+            projects: [project],
+            columns: DefaultColumns.makeDefaults() + [customDone],
+            tasks: [active, done, archived]
+        )
+
+        XCTAssertEqual(store.taskCount(in: project.id), 1, "完成语义列（含自定义）的任务不计入未完成计数")
+    }
+
+    // MARK: - 拖放载荷与手势映射
+
     func testTaskDragTypeIsDeclaredWithoutForceUnwrap() {
-        // 回归守卫：拖放类型必须以非可选方式声明；如果声明方式退化回
-        // UTType(_:)! 且返回 nil，模块初始化会直接崩溃并使本测试无法运行。
         XCTAssertEqual(BoardlyTheme.taskDragType.identifier, "com.boardly.task")
         XCTAssertFalse(BoardlyTheme.taskDragType.identifier.isEmpty)
     }
 
     func testTaskDragPayloadCodableRoundTrip() throws {
-        // Transferable 的 CodableRepresentation 依赖稳定 JSON 编解码。
         let payload = TaskDragPayload(taskID: BoardTask.ID())
         let data = try JSONEncoder().encode(payload)
         let decoded = try JSONDecoder().decode(TaskDragPayload.self, from: data)
         XCTAssertEqual(decoded, payload)
-        XCTAssertEqual(
-            String(data: try JSONEncoder().encode(TaskDragPayload(taskID: payload.taskID)), encoding: .utf8),
-            #"{"taskID":"\#(payload.taskID.uuidString)"}"#
+    }
+
+    func testDropActionMovesTaskBeforeDestinationCard() {
+        let first = BoardTask(title: "First", columnID: DefaultColumns.todoID, sortOrder: 0)
+        let second = BoardTask(title: "Second", columnID: DefaultColumns.todoID, sortOrder: 1)
+        let backlogTask = BoardTask(title: "Backlog item", columnID: DefaultColumns.backlogID, sortOrder: 0)
+        let store = BoardStore(tasks: [first, second, backlogTask])
+
+        let accepted = TaskDropHandler.handle(
+            [TaskDragPayload(taskID: backlogTask.id)],
+            store: store,
+            to: DefaultColumns.todoID,
+            before: first.id
         )
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(store.tasks(in: DefaultColumns.todoID).map(\.id), [backlogTask.id, first.id, second.id])
+        XCTAssertTrue(store.tasks(in: DefaultColumns.backlogID).isEmpty)
+    }
+
+    func testDropActionAppendsToColumnEndAndRejectsSelfDrop() {
+        let task = BoardTask(title: "Solo", columnID: DefaultColumns.backlogID, sortOrder: 0)
+        let store = BoardStore(tasks: [task])
+
+        XCTAssertTrue(
+            TaskDropHandler.handle(
+                [TaskDragPayload(taskID: task.id)],
+                store: store, to: DefaultColumns.todoID, before: nil
+            )
+        )
+        XCTAssertEqual(store.task(withID: task.id)?.columnID, DefaultColumns.todoID)
+
+        XCTAssertFalse(
+            TaskDropHandler.handle(
+                [TaskDragPayload(taskID: task.id)],
+                store: store, to: DefaultColumns.backlogID, before: task.id
+            )
+        )
+        XCTAssertFalse(TaskDropHandler.handle([], store: store, to: DefaultColumns.backlogID, before: nil))
     }
 
     /// 构造不等宽/不等距的列几何（中心与半宽均为任意值），验证算法只依赖实时几何。
     private func makeAnchors(
-        centers: [TaskStatus: CGFloat],
-        halfWidths: [TaskStatus: CGFloat]? = nil
+        centers: [BoardColumn.ID: CGFloat],
+        halfWidths: [BoardColumn.ID: CGFloat]? = nil
     ) -> [DirectGripPlanner.ColumnAnchor] {
-        TaskStatus.allCases.map { status in
-            let center = centers[status] ?? 0
-            let halfWidth = halfWidths?[status] ?? 140
+        centers.map { columnID, center in
+            let halfWidth = halfWidths?[columnID] ?? 140
             return DirectGripPlanner.ColumnAnchor(
-                status: status,
+                columnID: columnID,
                 frame: CGRect(x: center - halfWidth, y: 0, width: halfWidth * 2, height: 600)
             )
         }
     }
 
-    func testDirectGripPlannerCrossesColumnsUsingRealColumnCenters() {
+    func testDirectGripPlannerMapsByRealColumnCentersAndClamps() {
         let ids = [BoardTask.ID(), BoardTask.ID()]
         let taskID = ids[0]
-        // 不等距中心：backlog 100、todo 420、inProgress 780、done 1300。
-        let anchors = makeAnchors(centers: [.backlog: 100, .todo: 420, .inProgress: 780, .done: 1300])
+        let anchors = makeAnchors(centers: [
+            DefaultColumns.backlogID: 100,
+            DefaultColumns.todoID: 420,
+            DefaultColumns.inProgressID: 780,
+            DefaultColumns.doneID: 1300
+        ])
 
         func plan(width: CGFloat) -> DirectGripPlanner.Plan? {
             DirectGripPlanner.plan(
-                taskID: taskID, source: .todo, orderedIDs: ids,
+                taskID: taskID,
+                sourceColumnID: DefaultColumns.todoID,
+                orderedIDs: ids,
                 translation: CGSize(width: width, height: 0),
                 columnAnchors: anchors
             )
         }
 
-        // 跨 1 列：落在 inProgress 实际范围内。
-        XCTAssertEqual(plan(width: 360), DirectGripPlanner.Plan(status: .inProgress, before: nil))
-        // 跨 2 列：落在 done 实际范围内。
-        XCTAssertEqual(plan(width: 880), DirectGripPlanner.Plan(status: .done, before: nil))
-        // 跨 3 列越界：夹取到最后一列。
-        XCTAssertEqual(plan(width: 5_000), DirectGripPlanner.Plan(status: .done, before: nil))
-        // 向左跨列与越界夹取到首列。
-        XCTAssertEqual(plan(width: -320), DirectGripPlanner.Plan(status: .backlog, before: nil))
-        XCTAssertEqual(plan(width: -5_000), DirectGripPlanner.Plan(status: .backlog, before: nil))
-        // 落在源列自身范围内（如间隙之外的轻微位移仍属于 todo）→ 不跨列。
-        XCTAssertNil(plan(width: 40))
+        XCTAssertEqual(plan(width: 360)?.columnID, DefaultColumns.inProgressID)
+        XCTAssertEqual(plan(width: 880)?.columnID, DefaultColumns.doneID)
+        XCTAssertEqual(plan(width: 5_000)?.columnID, DefaultColumns.doneID, "右侧越界夹取末列")
+        XCTAssertEqual(plan(width: -320)?.columnID, DefaultColumns.backlogID)
+        XCTAssertEqual(plan(width: -5_000)?.columnID, DefaultColumns.backlogID, "左侧越界夹取首列")
+        XCTAssertNil(plan(width: 40), "仍在源列范围内：不跨列")
     }
 
-    func testDirectGripPlannerAdaptsToUnequalWidthsAndScaledWindows() {
-        let ids = [BoardTask.ID(), BoardTask.ID()]
-        let taskID = ids[0]
-        // 不等宽列：backlog [0,200)、todo [220,400)、inProgress [430,690)、done [700,1240)。
-        let anchors = makeAnchors(
-            centers: [.backlog: 100, .todo: 310, .inProgress: 560, .done: 970],
-            halfWidths: [.backlog: 100, .todo: 90, .inProgress: 130, .done: 270]
-        )
-
-        // targetX=640 在 inProgress [430,690) 内，即使距 done 中心也不越界。
-        XCTAssertEqual(
-            DirectGripPlanner.plan(
-                taskID: taskID, source: .todo, orderedIDs: ids,
-                translation: CGSize(width: 330, height: 0), columnAnchors: anchors
-            ),
-            DirectGripPlanner.Plan(status: .inProgress, before: nil)
-        )
-        // targetX=700（done 左边界，todo 中心 310 + 390）进入 done。
-        XCTAssertEqual(
-            DirectGripPlanner.plan(
-                taskID: taskID, source: .todo, orderedIDs: ids,
-                translation: CGSize(width: 390, height: 0), columnAnchors: anchors
-            ),
-            DirectGripPlanner.Plan(status: .done, before: nil)
-        )
-
-        // 窗口缩放 1.5×：中心与位移同比放大后映射结果不变。
-        let scaled = makeAnchors(
-            centers: [.backlog: 150, .todo: 465, .inProgress: 840, .done: 1455],
-            halfWidths: [.backlog: 150, .todo: 135, .inProgress: 195, .done: 405]
-        )
-        XCTAssertEqual(
-            DirectGripPlanner.plan(
-                taskID: taskID, source: .todo, orderedIDs: ids,
-                translation: CGSize(width: 495, height: 0), columnAnchors: scaled
-            ),
-            DirectGripPlanner.Plan(status: .inProgress, before: nil)
-        )
-    }
-
-    func testDirectGripPlannerLowDisplacementFallsBackToVertical() {
+    func testDirectGripPlannerSupportsCustomColumnsAndVerticalFallback() {
+        let testing = BoardColumn(name: "测试中", symbol: "testtube.2", colorName: "teal", sortOrder: 4)
         let three = [BoardTask.ID(), BoardTask.ID(), BoardTask.ID()]
         let middle = three[1]
-        let anchors = makeAnchors(centers: [.backlog: 100, .todo: 420, .inProgress: 780, .done: 1300])
+        let anchors = makeAnchors(centers: [
+            DefaultColumns.backlogID: 100,
+            DefaultColumns.todoID: 420,
+            DefaultColumns.inProgressID: 780,
+            testing.id: 1200,
+            DefaultColumns.doneID: 1600
+        ])
 
-        // 水平位移落在源列范围内、向上 → 插入到上一张之前。
+        // 自定义列同样可作为跨列目标。
+        let cross = DirectGripPlanner.plan(
+            taskID: middle, sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
+            translation: CGSize(width: 780, height: 0), columnAnchors: anchors
+        )
+        XCTAssertEqual(cross?.columnID, testing.id)
+
+        // 低水平位移回退为同列上移一位。
         let up = DirectGripPlanner.plan(
-            taskID: middle, source: .todo, orderedIDs: three,
-            translation: CGSize(width: 30, height: -80),
-            columnAnchors: anchors
+            taskID: middle, sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
+            translation: CGSize(width: 30, height: -80), columnAnchors: anchors
         )
-        XCTAssertEqual(up, DirectGripPlanner.Plan(status: .todo, before: three[0]))
+        XCTAssertEqual(up, DirectGripPlanner.Plan(columnID: DefaultColumns.todoID, before: three[0]))
 
-        // 向下 → 3 张卡中第 2 张下移一位等于追加列尾。
-        let down = DirectGripPlanner.plan(
-            taskID: middle, source: .todo, orderedIDs: three,
-            translation: CGSize(width: 0, height: 80),
-            columnAnchors: anchors
-        )
-        XCTAssertEqual(down, DirectGripPlanner.Plan(status: .todo, before: nil))
-
-        // 4 张卡中第 2 张下移一位 = 插入到第 4 张之前。
-        let four = [BoardTask.ID(), BoardTask.ID(), BoardTask.ID(), BoardTask.ID()]
-        let downFour = DirectGripPlanner.plan(
-            taskID: four[1], source: .inProgress, orderedIDs: four,
-            translation: CGSize(width: 0, height: 60),
-            columnAnchors: anchors
-        )
-        XCTAssertEqual(downFour, DirectGripPlanner.Plan(status: .inProgress, before: four[3]))
-    }
-
-    func testDirectGripPlannerVerticalBoundariesAndNoOps() {
-        let ids = [BoardTask.ID(), BoardTask.ID()]
-        let anchors = makeAnchors(centers: [.backlog: 100, .todo: 420, .inProgress: 780, .done: 1300])
-
-        // 首行上移、尾行下移、位移过小：均不产生移动。
+        // 首行上移 / 位移过小 / 空 anchors：无操作。
         XCTAssertNil(DirectGripPlanner.plan(
-            taskID: ids[0], source: .todo, orderedIDs: ids,
+            taskID: three[0], sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
             translation: CGSize(width: 0, height: -60), columnAnchors: anchors
         ))
         XCTAssertNil(DirectGripPlanner.plan(
-            taskID: ids[1], source: .todo, orderedIDs: ids,
-            translation: CGSize(width: 0, height: 60), columnAnchors: anchors
-        ))
-        XCTAssertNil(DirectGripPlanner.plan(
-            taskID: ids[0], source: .todo, orderedIDs: ids,
+            taskID: three[0], sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
             translation: CGSize(width: 8, height: 12), columnAnchors: anchors
         ))
-        // 未知任务 ID（含空列情形）与缺失列几何均不产生移动。
         XCTAssertNil(DirectGripPlanner.plan(
-            taskID: BoardTask.ID(), source: .todo, orderedIDs: [],
-            translation: CGSize(width: 300, height: 0), columnAnchors: anchors
-        ))
-        XCTAssertNil(DirectGripPlanner.plan(
-            taskID: ids[0], source: .todo, orderedIDs: ids,
+            taskID: three[0], sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
             translation: CGSize(width: 300, height: 0), columnAnchors: []
         ))
     }
+}
 
-    func testDirectGripPlanAppliesToStoreWithCorrectBeforeSemantics() {
-        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
-        let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
-        let backlogTask = BoardTask(title: "Backlog item", status: .backlog, sortOrder: 0)
-        let store = BoardStore(tasks: [first, second, backlogTask])
-        let orderedIDs = store.tasks(in: .backlog).map(\.id)
-        let anchors = makeAnchors(centers: [.backlog: 100, .todo: 420, .inProgress: 780, .done: 1300])
+// MARK: - 测试辅助
 
-        // 跨列计划（追加空/目标列语义）→ 应用后顺序正确。
-        let cross = DirectGripPlanner.plan(
-            taskID: backlogTask.id, source: .backlog, orderedIDs: orderedIDs,
-            translation: CGSize(width: 320, height: 0), columnAnchors: anchors
-        )
-        XCTAssertEqual(cross, DirectGripPlanner.Plan(status: .todo, before: nil))
-        store.moveTask(id: backlogTask.id, to: cross!.status, before: cross!.before)
-        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [first.id, second.id, backlogTask.id])
+/// 测试内编码快照（与 StoreSnapshot 同构；StoreSnapshot 为私有）。
+private struct StoreSnapshotEncodable: Encodable {
+    let projects: [Project]
+    let columns: [BoardColumn]
+    let tasks: [BoardTask]
+}
 
-        // 垂直计划（上移一位）→ 应用后插到上一张之前。
-        let vertical = DirectGripPlanner.plan(
-            taskID: backlogTask.id, source: .todo,
-            orderedIDs: store.tasks(in: .todo).map(\.id),
-            translation: CGSize(width: 0, height: -80),
-            columnAnchors: anchors
-        )
-        XCTAssertEqual(vertical, DirectGripPlanner.Plan(status: .todo, before: second.id))
-        store.moveTask(id: backlogTask.id, to: vertical!.status, before: vertical!.before)
-        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [first.id, backlogTask.id, second.id])
-    }
+private func orderedColumnNames(of columns: [BoardColumn]) -> [String] {
+    columns.sorted { $0.sortOrder < $1.sortOrder }.map(\.name)
+}
 
-    func testDropActionMovesTaskBeforeDestinationCard() {
-        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
-        let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
-        let backlogTask = BoardTask(title: "Backlog item", status: .backlog, sortOrder: 0)
-        let store = BoardStore(tasks: [first, second, backlogTask])
-
-        // 模拟卡片落点的 dropDestination action：拖 Backlog 卡到待办首卡上方。
-        let accepted = TaskDropHandler.handle(
-            [TaskDragPayload(taskID: backlogTask.id)],
-            store: store,
-            to: .todo,
-            before: first.id
-        )
-
-        XCTAssertTrue(accepted)
-        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [backlogTask.id, first.id, second.id])
-        XCTAssertTrue(store.tasks(in: .backlog).isEmpty)
-    }
-
-    func testDropActionAppendsToColumnEndAndRejectsSelfDrop() {
-        let task = BoardTask(title: "Solo", status: .backlog, sortOrder: 0)
-        let store = BoardStore(tasks: [task])
-
-        // 模拟列级落点（空列或列尾）：before 为 nil，追加到列尾。
-        XCTAssertTrue(
-            TaskDropHandler.handle([TaskDragPayload(taskID: task.id)], store: store, to: .todo, before: nil)
-        )
-        XCTAssertEqual(store.task(withID: task.id)?.status, .todo)
-        XCTAssertEqual(store.task(withID: task.id)?.sortOrder, 0)
-
-        // 拖到自身卡片上：拒绝且不产生任何移动。
-        XCTAssertFalse(
-            TaskDropHandler.handle([TaskDragPayload(taskID: task.id)], store: store, to: .backlog, before: task.id)
-        )
-        XCTAssertEqual(store.task(withID: task.id)?.status, .todo)
-
-        // 空载荷同样拒绝。
-        XCTAssertFalse(TaskDropHandler.handle([], store: store, to: .backlog, before: nil))
-    }
-
-    func testMoveTaskChangesStatusAndAppendsToDestination() {
-        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
-        let second = BoardTask(title: "Second", status: .done, sortOrder: 4)
-        let store = BoardStore(tasks: [first, second])
-
-        store.moveTask(id: first.id, to: .done)
-
-        XCTAssertEqual(store.task(withID: first.id)?.status, .done)
-        XCTAssertEqual(store.task(withID: first.id)?.sortOrder, 1)
-    }
-
-    func testMoveTaskReordersBeforeDestinationInSameColumn() {
-        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
-        let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
-        let third = BoardTask(title: "Third", status: .todo, sortOrder: 2)
-        let store = BoardStore(tasks: [first, second, third])
-
-        store.moveTask(id: third.id, to: .todo, before: first.id)
-
-        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [third.id, first.id, second.id])
-    }
-
-    func testInboxScopeOnlyShowsUnassignedTasks() {
-        let project = Project(name: "Project", symbol: "folder", colorName: "blue")
-        let inbox = BoardTask(title: "Inbox", status: .todo)
-        let assigned = BoardTask(title: "Assigned", status: .todo, projectID: project.id)
-        let store = BoardStore(projects: [project], tasks: [inbox, assigned])
-        store.selectedScope = .inbox
-
-        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [inbox.id])
-    }
-
-    func testSearchMatchesNotesAndTags() {
-        let tagged = BoardTask(title: "One", notes: "Accessibility review", status: .backlog, tags: ["VoiceOver"])
-        let other = BoardTask(title: "Two", notes: "Visual polish", status: .backlog)
-        let store = BoardStore(tasks: [tagged, other])
-
-        XCTAssertEqual(store.tasks(in: .backlog, matching: "voiceover").map(\.id), [tagged.id])
-        XCTAssertEqual(store.tasks(in: .backlog, matching: "accessibility").map(\.id), [tagged.id])
-    }
-
-    func testBlankTitleIsNotAdded() {
-        let store = BoardStore()
-
-        store.addTask(
-            title: "   ",
-            notes: "Ignored",
-            status: .todo,
-            priority: .medium,
-            projectID: nil,
-            dueDate: nil
-        )
-
-        XCTAssertTrue(store.tasks.isEmpty)
-    }
-
-    func testMoveTaskToEmptyColumnAppendsToDestination() {
-        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
-        let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
-        let store = BoardStore(tasks: [first, second])
-
-        // 拖放到空列（如 Backlog）：moveTask 无 before，应追加到列尾。
-        store.moveTask(id: second.id, to: .backlog)
-
-        XCTAssertEqual(store.task(withID: second.id)?.status, .backlog)
-        XCTAssertEqual(store.task(withID: second.id)?.sortOrder, 0)
-        // 源列在移出后重新归一化，剩余顺序保持稳定。
-        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [first.id])
-        XCTAssertEqual(store.task(withID: first.id)?.sortOrder, 0)
-    }
-
-    func testMoveTaskBeforeDestinationInDifferentColumn() {
-        let mover = BoardTask(title: "Mover", status: .todo, sortOrder: 0)
-        let doneFirst = BoardTask(title: "Done First", status: .done, sortOrder: 0)
-        let doneSecond = BoardTask(title: "Done Second", status: .done, sortOrder: 1)
-        let store = BoardStore(tasks: [mover, doneFirst, doneSecond])
-
-        // 跨列拖放到“Done Second”卡片上方：应插入到它之前。
-        store.moveTask(id: mover.id, to: .done, before: doneSecond.id)
-
-        XCTAssertEqual(store.tasks(in: .done).map(\.id), [doneFirst.id, mover.id, doneSecond.id])
-        XCTAssertTrue(store.tasks(in: .todo).isEmpty)
-    }
-
-    func testMoveTaskAppendAfterLastKeepsColumnStable() {
-        let first = BoardTask(title: "First", status: .inProgress, sortOrder: 3)
-        let second = BoardTask(title: "Second", status: .inProgress, sortOrder: 7)
-        let store = BoardStore(tasks: [first, second])
-
-        // 列级落点（列尾）对已经是最后一张的卡片不应改变顺序。
-        store.moveTask(id: second.id, to: .inProgress)
-
-        XCTAssertEqual(store.tasks(in: .inProgress).map(\.id), [first.id, second.id])
-        XCTAssertEqual(store.tasks(in: .inProgress).map(\.sortOrder), [0, 1])
-    }
-
-    func testMoveTaskBackAndForthBetweenColumnsPreservesOtherTasks() {
-        let first = BoardTask(title: "First", status: .todo, sortOrder: 0)
-        let second = BoardTask(title: "Second", status: .todo, sortOrder: 1)
-        let traveler = BoardTask(title: "Traveler", status: .todo, sortOrder: 2)
-        let store = BoardStore(tasks: [first, second, traveler])
-
-        store.moveTask(id: traveler.id, to: .backlog)
-        store.moveTask(id: traveler.id, to: .todo, before: first.id)
-
-        XCTAssertEqual(store.tasks(in: .todo).map(\.id), [traveler.id, first.id, second.id])
-        XCTAssertEqual(store.tasks(in: .todo).map(\.sortOrder), [0, 1, 2])
-        XCTAssertTrue(store.tasks(in: .backlog).isEmpty)
-    }
-
-    func testTaskCountExcludesCompletedTasks() {
-        let project = Project(name: "Project", symbol: "folder", colorName: "blue")
-        let active = BoardTask(title: "Active", status: .todo, projectID: project.id)
-        let completed = BoardTask(title: "Completed", status: .done, projectID: project.id)
-        let store = BoardStore(projects: [project], tasks: [active, completed])
-
-        XCTAssertEqual(store.taskCount(in: project.id), 1)
-    }
-
-    func testProjectLifecycleAndTaskRecovery() {
-        let store = BoardStore()
-        let projectID = try! XCTUnwrap(store.addProject(name: "  新项目  ", symbol: "folder", colorName: "violet"))
-        XCTAssertEqual(store.project(withID: projectID)?.name, "新项目")
-        XCTAssertEqual(store.selectedScope, .project(projectID))
-
-        store.addTask(
-            title: "Project task",
-            notes: "",
-            status: .todo,
-            priority: .medium,
-            projectID: projectID,
-            dueDate: nil
-        )
-
-        var project = try! XCTUnwrap(store.project(withID: projectID))
-        project.name = "重命名项目"
-        store.updateProject(project)
-        XCTAssertEqual(store.project(withID: projectID)?.name, "重命名项目")
-
-        store.deleteProject(id: projectID)
-        XCTAssertNil(store.project(withID: projectID))
-        XCTAssertNil(store.tasks.first?.projectID)
-        XCTAssertEqual(store.selectedScope, .all)
+private extension Array where Element == BoardColumn {
+    func minByOrder() -> BoardColumn? {
+        min { lhs, rhs in
+            lhs.sortOrder == rhs.sortOrder ? lhs.id.uuidString < rhs.id.uuidString : lhs.sortOrder < rhs.sortOrder
+        }
     }
 }

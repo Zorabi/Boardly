@@ -11,7 +11,13 @@ let package = Package(
         .executable(name: "Boardly", targets: ["Boardly"])
     ],
     targets: [
-        .executableTarget(name: "Boardly"),
+        .executableTarget(
+            name: "Boardly",
+            resources: [
+                // AppIcon.iconset 供 make-app.sh 打包 .app 时使用（iconutil 编译为 icns）。
+                .copy("Resources")
+            ]
+        ),
         .testTarget(name: "BoardlyTests", dependencies: ["Boardly"])
     ]
 )
