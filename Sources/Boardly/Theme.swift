@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 // MARK: - 设计令牌
 
 enum BoardlyTheme {
+    static let boardCoordinateSpace = "BoardlyBoardCoordinateSpace"
     /// 应用内拖放任务卡片使用的唯一传输类型；onDrag 与 onDrop 必须同时使用它。
     /// 使用 exportedAs（非可选、自带声明），避免 UTType(_:) 在无类型声明的
     /// SwiftPM 可执行环境中返回 nil 导致启动崩溃。

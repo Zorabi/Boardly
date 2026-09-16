@@ -3,6 +3,8 @@ import SwiftUI
 struct TaskCardView: View {
     @EnvironmentObject private var store: BoardStore
     let task: BoardTask
+    @Binding var directlyDraggedTaskID: BoardTask.ID?
+    let onDirectDragEnded: (BoardTask.ID, CGPoint) -> Void
 
     @State private var isHovering = false
     @State private var isDropTarget = false
@@ -57,13 +59,32 @@ struct TaskCardView: View {
                     .padding(.top, -2)
             }
         }
+        .opacity(directlyDraggedTaskID == task.id ? 0.62 : 1)
         .contentShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous))
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: BoardlyTaskFramePreferenceKey.self,
+                    value: [task.id: geometry.frame(in: .named(BoardlyTheme.boardCoordinateSpace))]
+                )
+            }
+        }
         .onTapGesture { store.selectedTaskID = task.id }
         .onHover { isHovering = $0 }
-        // 单一拖放路径：整张卡片正文即拖动入口。onDrag 由系统在短距移动后启动
-        // NSDraggingSession（拖拽快照跟随指针），点击/滚动仍由系统正常分发；
-        // 载荷以稳定 UTType com.boardly.task 的 JSON 数据表示传输。
-        .onDrag { taskDragProvider }
+        // 整张卡片正文由本地 DragGesture 负责拖动，避免 macOS SwiftUI
+        // onDrag 启动 NSDraggingSession 时吞掉短距离移动。列/卡片仍保留
+        // onDrop 作为系统拖放与辅助功能退路。
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 10, coordinateSpace: .named(BoardlyTheme.boardCoordinateSpace))
+                .onChanged { _ in
+                    directlyDraggedTaskID = task.id
+                }
+                .onEnded { value in
+                    let sourceID = task.id
+                    directlyDraggedTaskID = nil
+                    onDirectDragEnded(sourceID, value.location)
+                }
+        )
         // 拖到卡片上方：插入到这张卡片之前，实现同列重排与跨列精确落点。
         .onDrop(
             of: [BoardlyTheme.taskDragType],
@@ -81,20 +102,6 @@ struct TaskCardView: View {
         .accessibilityHint("点按打开详情。可从卡片任意区域拖动移动，或使用移动菜单调整列。")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { store.selectedTaskID = task.id }
-    }
-
-    /// 拖拽载荷的 NSItemProvider：按需编码 JSON，避免给每张卡片预生成数据。
-    private var taskDragProvider: NSItemProvider {
-        let provider = NSItemProvider()
-        provider.suggestedName = task.title
-        provider.registerDataRepresentation(
-            forTypeIdentifier: BoardlyTheme.taskDragType.identifier,
-            visibility: .all
-        ) { completion in
-            completion(try? JSONEncoder().encode(TaskDragPayload(taskID: task.id)), nil)
-            return nil
-        }
-        return provider
     }
 
     private var headerRow: some View {
