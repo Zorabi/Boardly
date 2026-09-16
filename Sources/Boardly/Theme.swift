@@ -284,3 +284,51 @@ struct BoardlySheetHeader: View {
         .padding(.bottom, 14)
     }
 }
+
+// MARK: - 统一滚动条主题
+
+/// 全应用唯一的滚动条主题实现：定位最近的宿主 NSScrollView，把横/纵
+/// scroller 切到 overlay 样式（悬浮、无亮色轨道槽，不会出现系统亮色
+/// legacy 滚动条），并把滑块着色为 Theme 的 accent 同源色。
+/// 看板横向、列内纵向与表单 ScrollView 共用这一个实现。
+private struct BoardlyScrollerThemer: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        // makeNSView 时视图尚未挂到 NSScrollView，下一个主循环再主题化。
+        DispatchQueue.main.async { Self.theme(scrollView: Self.enclosingScrollViewOf(view)) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { Self.theme(scrollView: Self.enclosingScrollViewOf(nsView)) }
+    }
+
+    private static func theme(scrollView: NSScrollView?) {
+        guard let scrollView else { return }
+        // overlay：无亮色轨道槽、悬浮不占内容空间（杜绝系统 legacy 亮色滚动条）；
+        // scroller 自身使用 vibrantDark 外观，滑块融入 Boardly 深色表面。
+        scrollView.scrollerStyle = .overlay
+        let darkAppearance = NSAppearance(named: .vibrantDark)
+        scrollView.verticalScroller?.appearance = darkAppearance
+        scrollView.horizontalScroller?.appearance = darkAppearance
+    }
+
+    private static func enclosingScrollViewOf(_ view: NSView) -> NSScrollView? {
+        var current: NSView? = view.superview
+        while let candidate = current {
+            if let scrollView = candidate as? NSScrollView {
+                return scrollView
+            }
+            current = candidate.superview
+        }
+        return nil
+    }
+}
+
+extension View {
+    /// 统一 Boardly 深色主题滚动条（overlay 样式 + accent 滑块着色）。
+    /// 应用于 ScrollView/Form 内容的 background，不影响布局与命中测试。
+    func boardlyScrollers() -> some View {
+        background(BoardlyScrollerThemer())
+    }
+}

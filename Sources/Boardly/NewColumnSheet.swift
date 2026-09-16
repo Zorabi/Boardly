@@ -82,6 +82,7 @@ struct NewColumnSheet: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .boardlyScrollers()
             .background(BoardlyTheme.canvas)
 
             Divider()

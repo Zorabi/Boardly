@@ -40,6 +40,7 @@ struct BoardView: View {
                     .padding(16)
                 }
                 .scrollIndicators(.visible)
+                .boardlyScrollers()
                 .background(BoardlyTheme.canvas)
                 .sheet(isPresented: $isNewColumnPresented) {
                     NewColumnSheet()
@@ -130,6 +131,7 @@ private struct TaskColumnView: View {
                 }
                 .padding(10)
             }
+            .boardlyScrollers()
         }
         .background(BoardlyTheme.column)
         .clipShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous))
