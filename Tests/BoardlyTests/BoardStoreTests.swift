@@ -296,6 +296,53 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: backups[0]), corruptData, "备份必须保留原始字节")
     }
 
+    /// 备份写入失败（目录不可写）时必须走安全失败路径：返回不绑定原文件的内存 store，
+    /// 后续修改绝不落盘覆盖原 board.json。覆盖畸形数据与 v1 迁移两条路径。
+    func testBackupWriteFailureNeverOverwritesOriginalFile() throws {
+        // 路径一：畸形数据 + 备份失败。
+        let corruptDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let corruptURL = corruptDir.appendingPathComponent("board.json")
+        try FileManager.default.createDirectory(at: corruptDir, withIntermediateDirectories: true)
+        let corruptData = Data("{ broken json".utf8)
+        try corruptData.write(to: corruptURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: corruptDir.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: corruptDir.path)
+            try? FileManager.default.removeItem(at: corruptDir)
+        }
+
+        let cleanStore = BoardStore.load(persistenceURL: corruptURL)
+        XCTAssertTrue(cleanStore.tasks.isEmpty)
+        cleanStore.addTask(title: "不应落盘", notes: "", columnID: DefaultColumns.todoID, priority: .medium, projectID: nil, dueDate: nil)
+        XCTAssertEqual(try Data(contentsOf: corruptURL), corruptData, "内存 store 的修改不得写回未备份的原文件")
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(at: corruptDir, includingPropertiesForKeys: nil)
+                .filter { $0.lastPathComponent.hasPrefix("board.json.") && $0.lastPathComponent.hasSuffix(".backup") }
+                .isEmpty,
+            "备份失败时不应留下任何备份文件"
+        )
+
+        // 路径二：合法 v1 数据 + 迁移备份失败：数据可用但仅存内存，原文件保持 v1 字节。
+        let legacyDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let legacyURL = legacyDir.appendingPathComponent("board.json")
+        try FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
+        let legacyData = Data(
+            #"{"projects": [], "tasks": [{"id": "aaaaaaaa-0000-0000-0000-0000000000ff", "title": "旧任务", "status": "todo", "sortOrder": 0}]}"#.utf8
+        )
+        try legacyData.write(to: legacyURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: legacyDir.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: legacyDir.path)
+            try? FileManager.default.removeItem(at: legacyDir)
+        }
+
+        let memoryStore = BoardStore.load(persistenceURL: legacyURL)
+        XCTAssertEqual(memoryStore.tasks.first?.title, "旧任务", "解码成功的数据应加载进内存 store")
+        XCTAssertEqual(memoryStore.tasks.first?.columnID, DefaultColumns.todoID)
+        memoryStore.addColumn(name: "也不应落盘", symbol: "circle", colorName: "blue")
+        XCTAssertEqual(try Data(contentsOf: legacyURL), legacyData, "备份失败的迁移不得让后续写入覆盖原 v1 文件")
+    }
+
     // MARK: - 列 CRUD 与排序
 
     func testAddRenameAndMoveColumnOrdering() {
