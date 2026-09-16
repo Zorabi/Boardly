@@ -2,16 +2,10 @@ import SwiftUI
 
 struct TaskCardView: View {
     @EnvironmentObject private var store: BoardStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let task: BoardTask
-    /// 看板命名坐标空间中实时采集的列几何，由 BoardView 注入；
-    /// 直接 grip 手势用它替代固定列步长推断目标列。
-    var columnAnchors: [DirectGripPlanner.ColumnAnchor] = []
 
     @State private var isHovering = false
     @State private var isDropTarget = false
-    @State private var isGripDragging = false
-    @State private var gripTranslation = CGSize.zero
 
     private var isSelected: Bool { store.selectedTaskID == task.id }
     private var isInDoneColumn: Bool { store.isDoneColumn(task.columnID) }
@@ -63,91 +57,52 @@ struct TaskCardView: View {
                     .padding(.top, -2)
             }
         }
-        // 直接 grip 手势进行中的反馈：位移跟随指针、轻微放大与阴影；
-        // Reduce Motion 时禁用位移动画（直接跳变），移动功能不受影响。
-        .offset(gripTranslation)
-        .scaleEffect(isGripDragging ? 1.02 : 1)
-        .opacity(isGripDragging ? 0.88 : 1)
-        .shadow(color: .black.opacity(isGripDragging ? 0.35 : 0), radius: isGripDragging ? 10 : 0, y: 4)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isGripDragging)
         .contentShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous))
         .onTapGesture { store.selectedTaskID = task.id }
         .onHover { isHovering = $0 }
-        // 类型安全拖放：Transferable 载荷经 CodableRepresentation 编码为 com.boardly.task，
-        // 与所有 dropDestination 的解码端使用同一类型，杜绝传输类型不一致。
-        .draggable(TaskDragPayload(taskID: task.id))
-        // 拖到卡片上方：插入到这张卡片之前，实现列内重排。
-        .dropDestination(for: TaskDragPayload.self) { payloads, _ in
-            TaskDropHandler.handle(
-                payloads,
+        // 单一拖放路径：整张卡片正文即拖动入口。onDrag 由系统在短距移动后启动
+        // NSDraggingSession（拖拽快照跟随指针），点击/滚动仍由系统正常分发；
+        // 载荷以稳定 UTType com.boardly.task 的 JSON 数据表示传输。
+        .onDrag { taskDragProvider }
+        // 拖到卡片上方：插入到这张卡片之前，实现同列重排与跨列精确落点。
+        .onDrop(
+            of: [BoardlyTheme.taskDragType],
+            delegate: TaskCardDropDelegate(
                 store: store,
-                to: task.columnID,
-                before: task.id
+                columnID: task.columnID,
+                before: task.id,
+                isTargeted: $isDropTarget
             )
-        } isTargeted: { targeted in
-            isDropTarget = targeted
-        }
+        )
         .help("拖动卡片可移动到其他列或调整顺序；点按查看详情")
         .contextMenu { moveMenuItems }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
-        .accessibilityHint("点按打开详情。可从卡片任意区域拖动（左上角抓取指示），或使用移动菜单调整列。")
+        .accessibilityHint("点按打开详情。可从卡片任意区域拖动移动，或使用移动菜单调整列。")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { store.selectedTaskID = task.id }
     }
 
+    /// 拖拽载荷的 NSItemProvider：按需编码 JSON，避免给每张卡片预生成数据。
+    private var taskDragProvider: NSItemProvider {
+        let provider = NSItemProvider()
+        provider.suggestedName = task.title
+        provider.registerDataRepresentation(
+            forTypeIdentifier: BoardlyTheme.taskDragType.identifier,
+            visibility: .all
+        ) { completion in
+            completion(try? JSONEncoder().encode(TaskDragPayload(taskID: task.id)), nil)
+            return nil
+        }
+        return provider
+    }
+
     private var headerRow: some View {
         HStack(spacing: 6) {
-            dragGrip
             projectLabel
             Spacer(minLength: 6)
             moveMenu
         }
-    }
-
-    /// 直接拖动入口：左上角抓取指示始终可命中（默认弱可见，悬停/拖动时增强），
-    /// 与右上角 ellipsis 菜单分居两端，互不重叠。保留卡片其余区域的
-    /// .draggable/.dropDestination 原生拖放路径。
-    private var dragGrip: some View {
-        Image(systemName: "line.3.horizontal")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(isGripDragging ? BoardlyTheme.accent : Color.secondary)
-            .frame(width: 24, height: 20)
-            .contentShape(Rectangle())
-            .opacity(gripVisibility)
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 4)
-                    .onChanged { value in
-                        isGripDragging = true
-                        gripTranslation = value.translation
-                    }
-                    .onEnded { value in
-                        applyDirectGrip(translation: value.translation)
-                        gripTranslation = .zero
-                        isGripDragging = false
-                    }
-            )
-            .accessibilityLabel("直接拖动移动任务")
-            .accessibilityHint("按住后左右拖动跨列，上下拖动在同列内调整顺序；也可使用移动菜单。")
-    }
-
-    /// 默认弱可见（不依赖 opacity 0 命中），悬停、选中或拖动时增强。
-    private var gripVisibility: Double {
-        if isGripDragging { return 1 }
-        if isHovering || isSelected { return 1 }
-        return 0.45
-    }
-
-    /// 直接 grip 手势结束：交给纯函数 DirectGripPlanner 依据实时列几何决策。
-    private func applyDirectGrip(translation: CGSize) {
-        guard let plan = DirectGripPlanner.plan(
-            taskID: task.id,
-            sourceColumnID: task.columnID,
-            orderedIDs: store.tasks(in: task.columnID).map(\.id),
-            translation: translation,
-            columnAnchors: columnAnchors
-        ) else { return }
-        store.moveTask(id: task.id, to: plan.columnID, before: plan.before)
     }
 
     /// 无需拖放的列移动菜单：满足键盘、VoiceOver 与触控板之外的可靠退路。
@@ -245,92 +200,54 @@ struct TaskCardView: View {
     }
 }
 
-// MARK: - 直接 grip 手势映射
+// MARK: - 拖放落点代理
 
-/// 直接 grip 手势的落点决策（纯函数，视图与单测共用）：
-/// 依据运行时采集的真实列几何，将“源列中心 + 水平位移”的实际 X 映射到
-/// 包含该 X 或中心最近的列（天然越界夹取首末列），不依赖任何固定列步长；
-/// 目标仍是源列（水平位移不足）时按垂直方向执行同列上移/下移一位。
-enum DirectGripPlanner {
-    /// 垂直方向触发上移/下移的最小位移。
-    static let verticalThreshold: CGFloat = 24
+/// onDrop 落点代理：卡片与列共用；解码 com.boardly.task 载荷后经
+/// TaskDropHandler 同步应用移动。高亮状态经 Binding 回写，
+/// 拖动跟随反馈由系统拖拽快照提供。
+struct TaskCardDropDelegate: DropDelegate {
+    let store: BoardStore
+    let columnID: BoardColumn.ID
+    /// 插入到该任务之前；nil 追加到目标列末尾（空列投放即此路径）。
+    let before: BoardTask.ID?
+    @Binding var isTargeted: Bool
 
-    /// 一列在看板命名坐标空间中的实时几何。
-    struct ColumnAnchor: Equatable {
-        let columnID: BoardColumn.ID
-        let frame: CGRect
-
-        var center: CGFloat { frame.midX }
-
-        /// targetX 落在本列水平范围内（不含右边界，避免相邻列边界重叠）。
-        func containsX(_ x: CGFloat) -> Bool {
-            frame.minX <= x && x < frame.maxX
-        }
+    func dropEntered(info: DropInfo) {
+        isTargeted = true
     }
 
-    struct Plan: Equatable {
-        let columnID: BoardColumn.ID
-        let before: BoardTask.ID?
+    func dropExited(info: DropInfo) {
+        isTargeted = false
     }
 
-    /// 返回 nil 表示本次拖动不产生移动（几何缺失、位移过小、首行上移、尾行下移或未知任务）。
-    static func plan(
-        taskID: BoardTask.ID,
-        sourceColumnID: BoardColumn.ID,
-        orderedIDs: [BoardTask.ID],
-        translation: CGSize,
-        columnAnchors: [ColumnAnchor],
-        verticalThreshold: CGFloat = DirectGripPlanner.verticalThreshold
-    ) -> Plan? {
-        guard let sourceIndex = orderedIDs.firstIndex(of: taskID) else { return nil }
-        guard let sourceAnchor = columnAnchors.first(where: { $0.columnID == sourceColumnID }) else { return nil }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
 
-        // 实际落点 X：源列实时中心 + 水平位移（几何随窗口缩放/侧栏变化自动适配）。
-        let targetX = sourceAnchor.center + translation.width
-
-        // 包含 targetX 的列优先；否则取中心最近的列（左右越界自然夹取首末列）。
-        let target: ColumnAnchor
-        if let containing = columnAnchors.first(where: { $0.containsX(targetX) }) {
-            target = containing
-        } else if let nearest = columnAnchors.min(by: {
-            abs($0.center - targetX) < abs($1.center - targetX)
-        }) {
-            target = nearest
-        } else {
-            return nil
+    func performDrop(info: DropInfo) -> Bool {
+        isTargeted = false
+        guard let provider = info.itemProviders(for: [BoardlyTheme.taskDragType]).first else {
+            return false
         }
-
-        // 跨列：追加到目标列列尾（空列同样成立）。
-        if target.columnID != sourceColumnID {
-            return Plan(columnID: target.columnID, before: nil)
+        let columnID = self.columnID
+        let before = self.before
+        provider.loadDataRepresentation(forTypeIdentifier: BoardlyTheme.taskDragType.identifier) { data, _ in
+            guard let data,
+                  let payload = try? JSONDecoder().decode(TaskDragPayload.self, from: data) else { return }
+            Task { @MainActor in
+                _ = TaskDropHandler.handle([payload], store: store, to: columnID, before: before)
+            }
         }
-
-        // 水平位移不足：按垂直方向同列上移/下移一位。
-        if translation.height <= -verticalThreshold {
-            guard sourceIndex > 0 else { return nil } // 已是列首
-            return Plan(columnID: sourceColumnID, before: orderedIDs[sourceIndex - 1])
-        }
-        if translation.height >= verticalThreshold {
-            guard sourceIndex < orderedIDs.count - 1 else { return nil } // 已是列尾
-            // 下移一位 = 插入到“下下张”之前；没有下下张则追加列尾。
-            let afterNext = sourceIndex + 2
-            let before = afterNext < orderedIDs.count ? orderedIDs[afterNext] : nil
-            return Plan(columnID: sourceColumnID, before: before)
-        }
-        return nil
+        return true
     }
 }
 
 // MARK: - 拖放载荷
 
-/// 任务卡片拖放载荷：macOS 14 类型安全 Transferable，经 CodableRepresentation
-/// 以稳定 JSON 编码写入 com.boardly.task；拖出与落点两侧由系统保证类型一致。
-struct TaskDragPayload: Codable, Hashable, Transferable, Sendable {
+/// 任务卡片拖放载荷：以稳定 UTType com.boardly.task 的 JSON 数据表示传输，
+/// onDrag 注册端与 onDrop 解码端共用同一类型，杜绝传输类型不一致。
+struct TaskDragPayload: Codable, Hashable, Sendable {
     let taskID: BoardTask.ID
-
-    static var transferRepresentation: some TransferRepresentation {
-        CodableRepresentation(contentType: BoardlyTheme.taskDragType)
-    }
 }
 
 // MARK: - 拖放解析
