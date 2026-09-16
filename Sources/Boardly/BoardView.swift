@@ -135,6 +135,7 @@ private struct TaskColumnView: View {
             Image(systemName: status.systemImage)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(BoardlyTheme.statusColor(status))
+                .accessibilityHidden(true)
             Text(status.title)
                 .font(.subheadline.weight(.semibold))
             Text(tasks.count, format: .number)
