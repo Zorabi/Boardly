@@ -8,6 +8,9 @@ struct BoardView: View {
     @State private var isNewColumnPresented = false
     @State private var editingColumn: BoardColumn?
     @State private var deletingColumn: BoardColumn?
+    @State private var columnFrames: [BoardColumn.ID: CGRect] = [:]
+    @State private var taskFrames: [BoardTask.ID: CGRect] = [:]
+    @State private var directlyDraggedTaskID: BoardTask.ID?
 
     private var visibleTaskCount: Int {
         store.orderedColumns.reduce(0) { result, column in
@@ -29,7 +32,9 @@ struct BoardView: View {
                                 searchText: searchText,
                                 onCreateTask: onCreateTask,
                                 onRename: { editingColumn = column },
-                                onDelete: { deletingColumn = column }
+                                onDelete: { deletingColumn = column },
+                                directlyDraggedTaskID: $directlyDraggedTaskID,
+                                onDirectDragEnded: handleDirectDragEnded
                             )
                             .frame(width: 280)
                             .containerRelativeFrame(.vertical)
@@ -42,6 +47,9 @@ struct BoardView: View {
                 .scrollIndicators(.visible)
                 .boardlyScrollers()
                 .background(BoardlyTheme.canvas)
+                .coordinateSpace(name: BoardlyTheme.boardCoordinateSpace)
+                .onPreferenceChange(BoardlyColumnFramePreferenceKey.self) { columnFrames = $0 }
+                .onPreferenceChange(BoardlyTaskFramePreferenceKey.self) { taskFrames = $0 }
                 .sheet(isPresented: $isNewColumnPresented) {
                     NewColumnSheet()
                         .environmentObject(store)
@@ -56,6 +64,30 @@ struct BoardView: View {
                 }
             }
         }
+    }
+
+    private func handleDirectDragEnded(taskID: BoardTask.ID, location: CGPoint) {
+        guard let targetColumn = columnFrames
+            .filter({ $0.value.contains(location) })
+            .sorted(by: { $0.value.minX < $1.value.minX })
+            .first?.key else { return }
+
+        let before = taskFrames
+            .filter { candidateID, frame in
+                candidateID != taskID && columnFrames[targetColumn]?.intersects(frame) == true
+            }
+            .sorted { lhs, rhs in
+                if lhs.value.midY == rhs.value.midY { return lhs.value.minY < rhs.value.minY }
+                return lhs.value.midY < rhs.value.midY
+            }
+            .first(where: { location.y < $0.value.midY })?.key
+
+        _ = TaskDropHandler.handle(
+            [TaskDragPayload(taskID: taskID)],
+            store: store,
+            to: targetColumn,
+            before: before
+        )
     }
 
     /// 看板尾部的“新增列”入口：满足“测试中”“验证中”等自定义状态的创建。
@@ -94,6 +126,8 @@ private struct TaskColumnView: View {
     let onCreateTask: (BoardColumn.ID) -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
+    @Binding var directlyDraggedTaskID: BoardTask.ID?
+    let onDirectDragEnded: (BoardTask.ID, CGPoint) -> Void
     @State private var isDropTarget = false
 
     private var tasks: [BoardTask] {
@@ -125,7 +159,11 @@ private struct TaskColumnView: View {
                         emptyState
                     } else {
                         ForEach(tasks) { task in
-                            TaskCardView(task: task)
+                            TaskCardView(
+                                task: task,
+                                directlyDraggedTaskID: $directlyDraggedTaskID,
+                                onDirectDragEnded: onDirectDragEnded
+                            )
                         }
                     }
                 }
@@ -134,6 +172,14 @@ private struct TaskColumnView: View {
             .boardlyScrollers()
         }
         .background(BoardlyTheme.column)
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: BoardlyColumnFramePreferenceKey.self,
+                    value: [column.id: geometry.frame(in: .named(BoardlyTheme.boardCoordinateSpace))]
+                )
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous)
@@ -252,5 +298,21 @@ private struct TaskColumnView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 26)
         .accessibilityElement(children: .combine)
+    }
+}
+
+struct BoardlyColumnFramePreferenceKey: PreferenceKey {
+    static let defaultValue: [BoardColumn.ID: CGRect] = [:]
+
+    static func reduce(value: inout [BoardColumn.ID: CGRect], nextValue: () -> [BoardColumn.ID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+struct BoardlyTaskFramePreferenceKey: PreferenceKey {
+    static let defaultValue: [BoardTask.ID: CGRect] = [:]
+
+    static func reduce(value: inout [BoardTask.ID: CGRect], nextValue: () -> [BoardTask.ID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
