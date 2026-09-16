@@ -1,31 +1,10 @@
 import SwiftUI
 
-/// 看板滚动内容的稳定命名坐标空间：列几何在该空间内采集，
-/// 不受窗口缩放、侧栏/Inspector 展开或滚动偏移以外的变换影响。
-enum BoardCoordinateSpace {
-    static let name = "boardly.board"
-}
-
-/// 各列在命名坐标空间中的实时 frame 上报；由 BoardView 汇总后
-/// 以纯数据向下传递，读取仅在布局阶段发生，不触发持久化。
-struct BoardColumnFramesPreferenceKey: PreferenceKey {
-    // computed var 保证 Swift 6 并发安全（无共享可变全局状态）。
-    static var defaultValue: [BoardColumn.ID: CGRect] { [:] }
-
-    static func reduce(value: inout [BoardColumn.ID: CGRect], nextValue: () -> [BoardColumn.ID: CGRect]) {
-        for (columnID, frame) in nextValue() where value[columnID] == nil {
-            value[columnID] = frame
-        }
-    }
-}
-
 struct BoardView: View {
     @EnvironmentObject private var store: BoardStore
     let searchText: String
     let onCreateTask: (BoardColumn.ID) -> Void
 
-    /// 列实时几何（命名坐标空间），随窗口/布局变化被动更新。
-    @State private var columnFrames: [BoardColumn.ID: CGRect] = [:]
     @State private var isNewColumnPresented = false
     @State private var editingColumn: BoardColumn?
     @State private var deletingColumn: BoardColumn?
@@ -33,12 +12,6 @@ struct BoardView: View {
     private var visibleTaskCount: Int {
         store.orderedColumns.reduce(0) { result, column in
             result + store.tasks(in: column.id, matching: searchText).count
-        }
-    }
-
-    private var columnAnchors: [DirectGripPlanner.ColumnAnchor] {
-        store.orderedColumns.compactMap { column in
-            columnFrames[column.id].map { DirectGripPlanner.ColumnAnchor(columnID: column.id, frame: $0) }
         }
     }
 
@@ -56,8 +29,7 @@ struct BoardView: View {
                                 searchText: searchText,
                                 onCreateTask: onCreateTask,
                                 onRename: { editingColumn = column },
-                                onDelete: { deletingColumn = column },
-                                columnAnchors: columnAnchors
+                                onDelete: { deletingColumn = column }
                             )
                             .frame(width: 280)
                             .containerRelativeFrame(.vertical)
@@ -66,13 +38,9 @@ struct BoardView: View {
                         addColumnPanel
                     }
                     .padding(16)
-                    .coordinateSpace(name: BoardCoordinateSpace.name)
                 }
                 .scrollIndicators(.visible)
                 .background(BoardlyTheme.canvas)
-                .onPreferenceChange(BoardColumnFramesPreferenceKey.self) { frames in
-                    columnFrames = frames
-                }
                 .sheet(isPresented: $isNewColumnPresented) {
                     NewColumnSheet()
                         .environmentObject(store)
@@ -125,7 +93,6 @@ private struct TaskColumnView: View {
     let onCreateTask: (BoardColumn.ID) -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
-    let columnAnchors: [DirectGripPlanner.ColumnAnchor]
     @State private var isDropTarget = false
 
     private var tasks: [BoardTask] {
@@ -157,7 +124,7 @@ private struct TaskColumnView: View {
                         emptyState
                     } else {
                         ForEach(tasks) { task in
-                            TaskCardView(task: task, columnAnchors: columnAnchors)
+                            TaskCardView(task: task)
                         }
                     }
                 }
@@ -173,21 +140,16 @@ private struct TaskColumnView: View {
                     lineWidth: isDropTarget ? 2 : 1
                 )
         }
-        // 实时上报本列在命名坐标空间中的 frame（仅在布局阶段读取，无布局回馈）。
-        .background(
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: BoardColumnFramesPreferenceKey.self,
-                    value: [column.id: geo.frame(in: .named(BoardCoordinateSpace.name))]
-                )
-            }
+        // 列级落点：追加到列尾；空列同样生效。列内精确位置由卡片上的 onDrop 处理。
+        .onDrop(
+            of: [BoardlyTheme.taskDragType],
+            delegate: TaskCardDropDelegate(
+                store: store,
+                columnID: column.id,
+                before: nil,
+                isTargeted: $isDropTarget
+            )
         )
-        // 列级落点：追加到列尾；空列同样生效。列内精确位置由卡片上的 dropDestination 处理。
-        .dropDestination(for: TaskDragPayload.self) { payloads, _ in
-            TaskDropHandler.handle(payloads, store: store, to: column.id, before: nil)
-        } isTargeted: { targeted in
-            isDropTarget = targeted
-        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(column.name)列，\(tasks.count)个任务")
     }
@@ -217,31 +179,54 @@ private struct TaskColumnView: View {
             .buttonStyle(BoardlyIconButtonStyle())
             .help("在“\(column.name)”列新建任务")
             .accessibilityLabel("在\(column.name)列新建任务")
+
+            columnMenu
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .contextMenu {
-            Button(action: onRename) {
-                Label("重命名列…", systemImage: "pencil")
-            }
-            Button {
-                store.moveColumn(id: column.id, byOffset: -1)
-            } label: {
-                Label("左移列", systemImage: "arrow.left")
-            }
-            .disabled(leftNeighbor == nil)
-            Button {
-                store.moveColumn(id: column.id, byOffset: 1)
-            } label: {
-                Label("右移列", systemImage: "arrow.right")
-            }
-            .disabled(rightNeighbor == nil)
-            Divider()
-            Button(role: .destructive, action: onDelete) {
-                Label("删除列…", systemImage: "trash")
-            }
-            .disabled(store.columns.count <= 1)
+        .contextMenu { columnMenuItems }
+    }
+
+    /// 列头常显的更多菜单：列位置调整的可见入口，不依赖右键。
+    private var columnMenu: some View {
+        Menu {
+            columnMenuItems
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 20)
+                .contentShape(Rectangle())
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("\(column.name)列操作")
+        .accessibilityLabel("\(column.name)列操作")
+        .accessibilityHint("重命名、左移、右移或删除这一列")
+    }
+
+    @ViewBuilder
+    private var columnMenuItems: some View {
+        Button(action: onRename) {
+            Label("重命名列…", systemImage: "pencil")
+        }
+        Button {
+            store.moveColumn(id: column.id, byOffset: -1)
+        } label: {
+            Label("左移列", systemImage: "arrow.left")
+        }
+        .disabled(leftNeighbor == nil)
+        Button {
+            store.moveColumn(id: column.id, byOffset: 1)
+        } label: {
+            Label("右移列", systemImage: "arrow.right")
+        }
+        .disabled(rightNeighbor == nil)
+        Divider()
+        Button(role: .destructive, action: onDelete) {
+            Label("删除列…", systemImage: "trash")
+        }
+        .disabled(store.columns.count <= 1)
     }
 
     private var emptyState: some View {

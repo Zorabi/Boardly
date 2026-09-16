@@ -56,12 +56,25 @@ final class BoardStore: ObservableObject {
         doneColumnIDs.contains(id)
     }
 
-    /// 新增列（追加到末尾）；isDone 声明完成语义列。
+    /// 展示顺序的首个完成列：新增列的默认位置在其之前（无完成列则末尾）。
+    var firstDoneColumn: BoardColumn? {
+        orderedColumns.first(where: \.isDone)
+    }
+
+    /// 新增列并插入到指定位置：before 为目标列时插到它之前，nil 追加到末尾。
+    /// isDone 声明完成语义列。插入后统一重排 sortOrder 并持久化。
     @discardableResult
-    func addColumn(name: String, symbol: String, colorName: String, isDone: Bool = false) -> BoardColumn.ID? {
+    func addColumn(
+        name: String,
+        symbol: String,
+        colorName: String,
+        isDone: Bool = false,
+        before destinationID: BoardColumn.ID? = nil
+    ) -> BoardColumn.ID? {
         let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanedName.isEmpty else { return nil }
 
+        var orderedIDs = orderedColumns.map(\.id)
         let column = BoardColumn(
             name: cleanedName,
             symbol: symbol,
@@ -70,6 +83,13 @@ final class BoardStore: ObservableObject {
             isDone: isDone
         )
         columns.append(column)
+        if let destinationID,
+           let destinationIndex = orderedIDs.firstIndex(of: destinationID) {
+            orderedIDs.insert(column.id, at: destinationIndex)
+        } else {
+            orderedIDs.append(column.id)
+        }
+        applyColumnOrder(orderedIDs)
         persist()
         return column.id
     }

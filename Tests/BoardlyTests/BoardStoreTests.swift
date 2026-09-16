@@ -664,87 +664,67 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertFalse(TaskDropHandler.handle([], store: store, to: DefaultColumns.backlogID, before: nil))
     }
 
-    /// 构造不等宽/不等距的列几何（中心与半宽均为任意值），验证算法只依赖实时几何。
-    private func makeAnchors(
-        centers: [BoardColumn.ID: CGFloat],
-        halfWidths: [BoardColumn.ID: CGFloat]? = nil
-    ) -> [DirectGripPlanner.ColumnAnchor] {
-        centers.map { columnID, center in
-            let halfWidth = halfWidths?[columnID] ?? 140
-            return DirectGripPlanner.ColumnAnchor(
-                columnID: columnID,
-                frame: CGRect(x: center - halfWidth, y: 0, width: halfWidth * 2, height: 600)
-            )
-        }
+    // MARK: - 新增列位置插入
+
+    /// addColumn(before:) 指定位置插入：最前、某列之前、末尾；顺序持久化为连续 sortOrder。
+    func testAddColumnInsertsAtRequestedPosition() throws {
+        let store = BoardStore(columns: DefaultColumns.makeDefaults())
+
+        // 最前（首列之前）。
+        let frontID = try XCTUnwrap(
+            store.addColumn(name: "最前", symbol: "bolt", colorName: "teal", before: DefaultColumns.backlogID)
+        )
+        XCTAssertEqual(
+            store.orderedColumns.map(\.name),
+            ["最前", "Backlog", "待办", "进行中", "已完成"]
+        )
+
+        // 指定列之后 = 下一列之前（“待办”之后 = “进行中”之前）。
+        _ = try XCTUnwrap(
+            store.addColumn(name: "中间", symbol: "clock", colorName: "amber", before: DefaultColumns.inProgressID)
+        )
+        XCTAssertEqual(
+            store.orderedColumns.map(\.name),
+            ["最前", "Backlog", "待办", "中间", "进行中", "已完成"]
+        )
+
+        // 末尾（before 为 nil）。
+        _ = try XCTUnwrap(store.addColumn(name: "末尾", symbol: "tray", colorName: "coral", before: nil))
+        XCTAssertEqual(
+            store.orderedColumns.map(\.name).last, "末尾"
+        )
+
+        // 插入后 sortOrder 连续且与展示顺序一致（持久化结构稳定）。
+        XCTAssertEqual(store.orderedColumns.map(\.sortOrder), Array(0..<store.orderedColumns.count))
+
+        // 未知目标列：安全回退为追加末尾，不抛错。
+        let fallbackID = try XCTUnwrap(store.addColumn(name: "兜底", symbol: "circle", colorName: "blue", before: UUID()))
+        XCTAssertEqual(store.orderedColumns.last?.id, fallbackID)
     }
 
-    func testDirectGripPlannerMapsByRealColumnCentersAndClamps() {
-        let ids = [BoardTask.ID(), BoardTask.ID()]
-        let taskID = ids[0]
-        let anchors = makeAnchors(centers: [
-            DefaultColumns.backlogID: 100,
-            DefaultColumns.todoID: 420,
-            DefaultColumns.inProgressID: 780,
-            DefaultColumns.doneID: 1300
-        ])
+    /// 新增列默认位置：首个完成列之前；无完成列时追加末尾（NewColumnSheet 的默认值依据）。
+    func testAddColumnDefaultPlacementBeforeFirstDoneColumn() throws {
+        let store = BoardStore(columns: DefaultColumns.makeDefaults())
 
-        func plan(width: CGFloat) -> DirectGripPlanner.Plan? {
-            DirectGripPlanner.plan(
-                taskID: taskID,
-                sourceColumnID: DefaultColumns.todoID,
-                orderedIDs: ids,
-                translation: CGSize(width: width, height: 0),
-                columnAnchors: anchors
-            )
-        }
-
-        XCTAssertEqual(plan(width: 360)?.columnID, DefaultColumns.inProgressID)
-        XCTAssertEqual(plan(width: 880)?.columnID, DefaultColumns.doneID)
-        XCTAssertEqual(plan(width: 5_000)?.columnID, DefaultColumns.doneID, "右侧越界夹取末列")
-        XCTAssertEqual(plan(width: -320)?.columnID, DefaultColumns.backlogID)
-        XCTAssertEqual(plan(width: -5_000)?.columnID, DefaultColumns.backlogID, "左侧越界夹取首列")
-        XCTAssertNil(plan(width: 40), "仍在源列范围内：不跨列")
-    }
-
-    func testDirectGripPlannerSupportsCustomColumnsAndVerticalFallback() {
-        let testing = BoardColumn(name: "测试中", symbol: "testtube.2", colorName: "teal", sortOrder: 4)
-        let three = [BoardTask.ID(), BoardTask.ID(), BoardTask.ID()]
-        let middle = three[1]
-        let anchors = makeAnchors(centers: [
-            DefaultColumns.backlogID: 100,
-            DefaultColumns.todoID: 420,
-            DefaultColumns.inProgressID: 780,
-            testing.id: 1200,
-            DefaultColumns.doneID: 1600
-        ])
-
-        // 自定义列同样可作为跨列目标。
-        let cross = DirectGripPlanner.plan(
-            taskID: middle, sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
-            translation: CGSize(width: 780, height: 0), columnAnchors: anchors
+        // 默认（首完成列之前）：与 NewColumnSheet.defaultPlacement 一致地计算 before。
+        let defaultBefore = store.firstDoneColumn?.id
+        XCTAssertEqual(defaultBefore, DefaultColumns.doneID, "默认目标是首个完成列")
+        _ = try XCTUnwrap(store.addColumn(name: "测试中", symbol: "testtube.2", colorName: "teal", before: defaultBefore))
+        XCTAssertEqual(
+            store.orderedColumns.map(\.name),
+            ["Backlog", "待办", "进行中", "测试中", "已完成"],
+            "默认插在首个完成列之前"
         )
-        XCTAssertEqual(cross?.columnID, testing.id)
 
-        // 低水平位移回退为同列上移一位。
-        let up = DirectGripPlanner.plan(
-            taskID: middle, sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
-            translation: CGSize(width: 30, height: -80), columnAnchors: anchors
+        // 无完成列：firstDoneColumn 为 nil → before nil → 追加末尾。
+        let a = BoardColumn(name: "A", symbol: "circle", colorName: "blue", sortOrder: 0)
+        let b = BoardColumn(name: "B", symbol: "clock", colorName: "amber", sortOrder: 1)
+        let noDoneStore = BoardStore(columns: [a, b])
+        XCTAssertNil(noDoneStore.firstDoneColumn)
+        let appendedID = try XCTUnwrap(
+            noDoneStore.addColumn(name: "末尾列", symbol: "bolt", colorName: "teal", before: noDoneStore.firstDoneColumn?.id)
         )
-        XCTAssertEqual(up, DirectGripPlanner.Plan(columnID: DefaultColumns.todoID, before: three[0]))
-
-        // 首行上移 / 位移过小 / 空 anchors：无操作。
-        XCTAssertNil(DirectGripPlanner.plan(
-            taskID: three[0], sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
-            translation: CGSize(width: 0, height: -60), columnAnchors: anchors
-        ))
-        XCTAssertNil(DirectGripPlanner.plan(
-            taskID: three[0], sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
-            translation: CGSize(width: 8, height: 12), columnAnchors: anchors
-        ))
-        XCTAssertNil(DirectGripPlanner.plan(
-            taskID: three[0], sourceColumnID: DefaultColumns.todoID, orderedIDs: three,
-            translation: CGSize(width: 300, height: 0), columnAnchors: []
-        ))
+        XCTAssertEqual(noDoneStore.orderedColumns.last?.id, appendedID, "无完成列时默认追加到末尾")
     }
 }
 
