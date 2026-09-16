@@ -425,7 +425,13 @@ private struct StoreSnapshot: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let version = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        // 键完全缺失按 v1 兼容；键存在（含显式 null）必须严格解码，null/类型错误触发恢复路径。
+        let version: Int
+        if container.contains(.schemaVersion) {
+            version = try container.decode(Int.self, forKey: .schemaVersion)
+        } else {
+            version = 1
+        }
         guard (1...Self.currentSchemaVersion).contains(version) else {
             // 更新的未来版本（例如降级运行旧 App）：显式拒绝，触发备份而非误覆盖。
             throw DecodingError.dataCorrupted(.init(
@@ -478,7 +484,8 @@ extension BoardStore {
     /// 备份写入失败时走安全失败路径：返回不绑定原文件的内存 store（persistenceURL = nil），
     /// 后续任何修改都不会落盘覆盖原 board.json。
     static func load(persistenceURL: URL) -> BoardStore {
-        guard let data = try? Data(contentsOf: persistenceURL) else {
+        guard FileManager.default.fileExists(atPath: persistenceURL.path) else {
+            // 文件不存在：正常首启，示例种子 + 绑定路径。
             let seed = preview
             return BoardStore(
                 projects: seed.projects,
@@ -486,6 +493,11 @@ extension BoardStore {
                 tasks: seed.tasks,
                 persistenceURL: persistenceURL
             )
+        }
+        // 文件存在但读取失败（权限/卷错误等）：原始字节拿不到、也无法备份，
+        // 必须返回不绑定路径的安全内存 store，避免后续写入覆盖不可读的原文件。
+        guard let data = try? Data(contentsOf: persistenceURL) else {
+            return BoardStore(persistenceURL: nil)
         }
 
         do {

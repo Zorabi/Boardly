@@ -151,6 +151,77 @@ final class BoardStoreTests: XCTestCase {
         )
     }
 
+    /// 非可选字段的显式 null 必须抛错（不得当作缺失降级）：columnID/isDone/schemaVersion。
+    /// columnID:null 会被静默重分类到 legacyStatus/todoID、isDone:null 降级 false、
+    /// schemaVersion:null 降级 v1——三种情况都必须进入恢复路径而非静默改数据。
+    func testExplicitNullsOnNonOptionalFieldsThrow() throws {
+        // BoardTask.columnID: null（即使同时带有合法旧 status）。
+        let nullColumnID = #"{"id": "aaaaaaaa-0000-0000-0000-0000000000b1", "title": "T", "columnID": null, "status": "todo"}"#
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(BoardTask.self, from: Data(nullColumnID.utf8)),
+            "columnID 显式 null 不得回退旧 status 静默重分类"
+        )
+
+        // BoardColumn.isDone: null。
+        let nullIsDone = """
+        {"schemaVersion": 2, "projects": [], "tasks": [],
+         "columns": [{"id": "cccccccc-0000-0000-0000-00000000000c", "name": "A", "symbol": "circle", "colorName": "blue", "sortOrder": 0, "isDone": null}]}
+        """
+        XCTAssertThrowsError(
+            try BoardStore.decodeSnapshot(Data(nullIsDone.utf8)),
+            "isDone 显式 null 不得降级为 false"
+        )
+
+        // schemaVersion: null。
+        let nullVersion = """
+        {"schemaVersion": null, "projects": [], "tasks": []}
+        """
+        XCTAssertThrowsError(
+            try BoardStore.decodeSnapshot(Data(nullVersion.utf8)),
+            "schemaVersion 显式 null 不得降级为 v1"
+        )
+    }
+
+    /// columnID 与旧 status 同时缺失：数据不完整，必须抛错，
+    /// 不得静默把 v2 缺列任务归入待办列。
+    func testTaskWithoutColumnIDAndStatusThrows() {
+        let bothMissing = #"{"id": "aaaaaaaa-0000-0000-0000-0000000000b2", "title": "无列任务"}"#
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(BoardTask.self, from: Data(bothMissing.utf8)),
+            "columnID 与 status 均缺失不得静默落入待办列"
+        )
+    }
+
+    /// load 区分“文件不存在”与“存在但读取失败”：
+    /// 前者返回绑定路径的 preview 种子（可正常持久化）；
+    /// 后者返回不绑定路径的安全内存 store，后续写入绝不覆盖不可读的原文件。
+    func testLoadDistinguishesMissingFileFromUnreadableFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // 路径一：文件不存在 → preview 种子 + 绑定路径，修改会正常落盘。
+        let missingURL = dir.appendingPathComponent("board.json")
+        let seededStore = BoardStore.load(persistenceURL: missingURL)
+        XCTAssertFalse(seededStore.tasks.isEmpty, "首启应加载示例种子")
+        seededStore.addTask(title: "首启任务", notes: "", columnID: DefaultColumns.todoID, priority: .medium, projectID: nil, dueDate: nil)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: missingURL.path), "绑定路径的 store 修改后应落盘")
+
+        // 路径二：文件存在但不可读（chmod 000）→ 安全内存 store，修改不落盘。
+        let unreadableURL = dir.appendingPathComponent("board2.json")
+        let validJSON = #"{"schemaVersion": 2, "projects": [], "columns": [{"id": "cccccccc-0000-0000-0000-00000000000e", "name": "A", "symbol": "circle", "colorName": "blue", "sortOrder": 0, "isDone": true}], "tasks": []}"#
+        let originalData = Data(validJSON.utf8)
+        try originalData.write(to: unreadableURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadableURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadableURL.path) }
+
+        let safeStore = BoardStore.load(persistenceURL: unreadableURL)
+        XCTAssertTrue(safeStore.tasks.isEmpty, "读取失败的安全 store 不得以示例任务冒充")
+        safeStore.addTask(title: "不应落盘", notes: "", columnID: DefaultColumns.todoID, priority: .medium, projectID: nil, dueDate: nil)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadableURL.path)
+        XCTAssertEqual(try Data(contentsOf: unreadableURL), originalData, "不可读原文件不得被覆盖")
+    }
+
     /// v2 快照缺 projects/columns/tasks 任一必需键：必须抛错，不得降级空集合后覆盖原数据。
     func testV2SnapshotRequiresAllCollectionKeys() {
         let columns = "[{\"id\": \"cccccccc-0000-0000-0000-00000000000a\", \"name\": \"A\", \"symbol\": \"circle\", \"colorName\": \"blue\", \"sortOrder\": 0}]"

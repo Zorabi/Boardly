@@ -48,8 +48,13 @@ struct BoardColumn: Identifiable, Codable, Hashable, Sendable {
         symbol = try container.decode(String.self, forKey: .symbol)
         colorName = try container.decode(String.self, forKey: .colorName)
         sortOrder = try container.decode(Int.self, forKey: .sortOrder)
-        // isDone 是后期新增字段：缺失按 false 兼容；存在但类型错误仍会抛出（畸形数据不静默吞）。
-        isDone = try container.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
+        // isDone 是后期新增字段：仅键完全缺失按 false 兼容；
+        // 键存在（含显式 null）必须严格解码，null/类型错误都抛出。
+        if container.contains(.isDone) {
+            isDone = try container.decode(Bool.self, forKey: .isDone)
+        } else {
+            isDone = false
+        }
     }
 }
 
@@ -167,14 +172,19 @@ struct BoardTask: Identifiable, Codable, Hashable, Sendable {
         // 旧版兼容默认仅用于“字段真正缺失”（可选字段允许合法 null）；
         // 字段存在但类型/取值畸形必须抛错，绝不静默重置。
         notes = try Self.decodeField(String.self, default: "", in: container, forKey: .notes)
-        if container.contains(.columnID),
-           let decoded = try container.decodeIfPresent(UUID.self, forKey: .columnID) {
-            columnID = decoded
+        if container.contains(.columnID) {
+            // 非可选字段：仅键完全缺失才走旧版 status/默认；键存在（含显式 null）
+            // 必须严格解码，避免 null 被静默重分类到 legacyStatus/todoID。
+            columnID = try container.decode(UUID.self, forKey: .columnID)
         } else if container.contains(.legacyStatus) {
             let legacy = try container.decode(TaskStatus.self, forKey: .legacyStatus)
             columnID = DefaultColumns.columnID(for: legacy)
         } else {
-            columnID = DefaultColumns.todoID
+            // v1 正常任务必带 status；两者都缺失说明数据不完整，不得静默归入待办列。
+            throw DecodingError.keyNotFound(CodingKeys.columnID, .init(
+                codingPath: decoder.codingPath,
+                debugDescription: "任务缺少 columnID 且无旧版 status 字段，无法确定所属列"
+            ))
         }
         priority = try Self.decodeField(TaskPriority.self, default: .medium, in: container, forKey: .priority)
         projectID = try Self.decodeOptionalField(UUID.self, in: container, forKey: .projectID)
