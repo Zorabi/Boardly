@@ -17,6 +17,11 @@ struct ColumnEditorSheet: View {
         !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// 该列是当前唯一的完成列：关闭完成语义的开关被禁用（至少保留一个完成列）。
+    private var isOnlyDoneColumn: Bool {
+        store.column(withID: draft.id)?.isDone == true && store.doneColumnIDs.count == 1
+    }
+
     private var hasChanges: Bool {
         let original = store.column(withID: draft.id)
         return original != draft && canSubmit
@@ -58,6 +63,24 @@ struct ColumnEditorSheet: View {
                             }
                         }
                     }
+
+                    BoardlyFormSection("语义") {
+                        Toggle(isOn: $draft.isDone) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("完成列")
+                                Text("该列任务视为已完成：不计入侧栏未完成数，看板中置灰显示。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .disabled(isOnlyDoneColumn)
+                        if isOnlyDoneColumn {
+                            Text("这是最后一个完成列，至少需要保留一个；可先把其他列设为完成列。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 8)
@@ -77,7 +100,7 @@ struct ColumnEditorSheet: View {
             }
             .padding(16)
         }
-        .frame(width: 420, height: 360)
+        .frame(width: 420, height: 440)
         .onAppear { focusedField = .name }
     }
 
@@ -105,7 +128,7 @@ struct ColumnEditorSheet: View {
 
     private func save() {
         guard hasChanges else { return }
-        store.updateColumn(draft)
+        guard store.updateColumn(draft) else { return }
         dismiss()
     }
 }

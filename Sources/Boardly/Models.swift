@@ -36,6 +36,21 @@ struct BoardColumn: Identifiable, Codable, Hashable, Sendable {
         self.sortOrder = sortOrder
         self.isDone = isDone
     }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, symbol, colorName, sortOrder, isDone
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        symbol = try container.decode(String.self, forKey: .symbol)
+        colorName = try container.decode(String.self, forKey: .colorName)
+        sortOrder = try container.decode(Int.self, forKey: .sortOrder)
+        // isDone 是后期新增字段：缺失按 false 兼容；存在但类型错误仍会抛出（畸形数据不静默吞）。
+        isDone = try container.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
+    }
 }
 
 /// 默认四列使用固定 UUID，保证旧快照（按 status 存储）迁移与
@@ -152,7 +167,9 @@ struct BoardTask: Identifiable, Codable, Hashable, Sendable {
         notes = (try? container.decode(String.self, forKey: .notes)) ?? ""
         if let decoded = try? container.decode(UUID.self, forKey: .columnID) {
             columnID = decoded
-        } else if let legacy = try? container.decode(TaskStatus.self, forKey: .legacyStatus) {
+        } else if container.contains(.legacyStatus) {
+            // 旧 status 字段存在时必须可解析：畸形取值抛错，而不是静默落到待办列。
+            let legacy = try container.decode(TaskStatus.self, forKey: .legacyStatus)
             columnID = DefaultColumns.columnID(for: legacy)
         } else {
             columnID = DefaultColumns.todoID

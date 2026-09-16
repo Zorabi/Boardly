@@ -15,10 +15,31 @@ struct ColumnDeleteSheet: View {
         store.orderedColumns.filter { $0.id != column.id }
     }
 
+    /// 该列是最后一个完成列：删除被禁止（完成语义无法随任务迁移）。
+    private var isLastDoneColumn: Bool {
+        column.isDone && store.doneColumnIDs.count == 1
+    }
+
     private var canDelete: Bool {
-        // 空列：任选一列接收（无任务实际移动）；非空列：必须明确选择目标。
-        if columnTaskCount == 0 { return !otherColumns.isEmpty }
-        return migrationTargetID != nil
+        Self.canConfirm(
+            taskCount: columnTaskCount,
+            selectedTargetID: migrationTargetID,
+            otherColumnCount: otherColumns.count,
+            isLastDoneColumn: isLastDoneColumn
+        )
+    }
+
+    /// 删除门槛（纯函数，供状态测试）：
+    /// 非空列必须由用户显式选择迁移目标；最后一个完成列不可删除。
+    static func canConfirm(
+        taskCount: Int,
+        selectedTargetID: BoardColumn.ID?,
+        otherColumnCount: Int,
+        isLastDoneColumn: Bool
+    ) -> Bool {
+        if isLastDoneColumn { return false }
+        if taskCount == 0 { return otherColumnCount > 0 }
+        return selectedTargetID != nil
     }
 
     var body: some View {
@@ -31,9 +52,18 @@ struct ColumnDeleteSheet: View {
             )
 
             VStack(alignment: .leading, spacing: 16) {
-                if columnTaskCount > 0 {
+                if isLastDoneColumn {
+                    BoardlyFormSection("无法删除") {
+                        Text("这是最后一个完成列，至少需要保留一个。可先把其他列设为完成列，再删除此列。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if columnTaskCount > 0 {
                     BoardlyFormSection("任务迁移") {
                         VStack(alignment: .leading, spacing: 8) {
+                            Text("请选择一个列接收这 \(columnTaskCount) 个任务（按原顺序追加到其末尾）。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                             ForEach(otherColumns) { target in
                                 migrationRow(target)
                             }
@@ -60,15 +90,11 @@ struct ColumnDeleteSheet: View {
                     .keyboardShortcut(.cancelAction)
                 Button("删除列", role: .destructive) { delete() }
                     .buttonStyle(BoardlyDestructiveButtonStyle())
-                    .keyboardShortcut(.defaultAction)
                     .disabled(!canDelete)
             }
             .padding(16)
         }
-        .frame(width: 420, height: columnTaskCount > 0 ? 380 : 260)
-        .onAppear {
-            migrationTargetID = otherColumns.first?.id
-        }
+        .frame(width: 420, height: columnTaskCount > 0 ? 400 : 280)
     }
 
     private func migrationRow(_ target: BoardColumn) -> some View {
@@ -111,8 +137,9 @@ struct ColumnDeleteSheet: View {
     }
 
     private func delete() {
-        guard let targetID = migrationTargetID ?? otherColumns.first?.id else { return }
-        guard store.deleteColumn(id: column.id, migratingTasksTo: targetID) else { return }
+        // 非空列必须使用用户显式选择的目标；空列无任务实际迁移，任选一列接收即可。
+        let targetID = columnTaskCount == 0 ? otherColumns.first?.id : migrationTargetID
+        guard let targetID, store.deleteColumn(id: column.id, migratingTasksTo: targetID) else { return }
         dismiss()
     }
 }

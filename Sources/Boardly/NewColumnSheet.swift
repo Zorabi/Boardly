@@ -6,6 +6,7 @@ struct NewColumnSheet: View {
     @State private var name = ""
     @State private var symbol = "square.grid.2x2"
     @State private var colorName = "violet"
+    @State private var isDone = false
     @FocusState private var focusedField: Field?
 
     private enum Field { case name }
@@ -50,6 +51,18 @@ struct NewColumnSheet: View {
                             }
                         }
                     }
+
+                    BoardlyFormSection("语义") {
+                        Toggle(isOn: $isDone) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("完成列")
+                                Text("该列任务视为已完成：不计入侧栏未完成数，看板中置灰显示。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 8)
@@ -69,7 +82,7 @@ struct NewColumnSheet: View {
             }
             .padding(16)
         }
-        .frame(width: 420, height: 360)
+        .frame(width: 420, height: 440)
         .onAppear { focusedField = .name }
     }
 
@@ -97,7 +110,7 @@ struct NewColumnSheet: View {
 
     private func createColumn() {
         guard canSubmit else { return }
-        store.addColumn(name: name, symbol: symbol, colorName: colorName)
+        store.addColumn(name: name, symbol: symbol, colorName: colorName, isDone: isDone)
         dismiss()
     }
 }
