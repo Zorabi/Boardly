@@ -5,7 +5,7 @@ struct NewTaskSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var notes = ""
-    @State private var status: TaskStatus
+    @State private var columnID: BoardColumn.ID?
     @State private var priority: TaskPriority = .medium
     @State private var projectID: UUID?
     @State private var hasDueDate = false
@@ -14,8 +14,9 @@ struct NewTaskSheet: View {
 
     private enum Field { case title }
 
-    init(initialStatus: TaskStatus = .todo) {
-        _status = State(initialValue: initialStatus)
+    /// 从列头进入时预填该列；从工具栏进入为 nil，默认第一列。
+    init(initialColumnID: BoardColumn.ID? = nil) {
+        _columnID = State(initialValue: initialColumnID)
     }
 
     private var canSubmit: Bool {
@@ -47,8 +48,15 @@ struct NewTaskSheet: View {
                     }
 
                     BoardlyFormSection("组织") {
-                        BoardlyFormRow(label: "状态") {
-                            statusPicker
+                        BoardlyFormRow(label: "列") {
+                            Picker("列", selection: $columnID) {
+                                ForEach(store.orderedColumns) { column in
+                                    Label(column.name, systemImage: column.symbol)
+                                        .tag(BoardColumn.ID?.some(column.id))
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
                         }
                         BoardlyFormRow(label: "优先级") {
                             Picker("优先级", selection: $priority) {
@@ -104,27 +112,20 @@ struct NewTaskSheet: View {
         }
         .frame(width: 480, height: 560)
         .onAppear {
+            if columnID == nil {
+                columnID = store.orderedColumns.first?.id
+            }
             if case let .project(id) = store.selectedScope { projectID = id }
             focusedField = .title
         }
     }
 
-    private var statusPicker: some View {
-        Picker("状态", selection: $status) {
-            ForEach(TaskStatus.allCases) { item in
-                Label(item.title, systemImage: item.systemImage).tag(item)
-            }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-    }
-
     private func submit() {
-        guard canSubmit else { return }
+        guard canSubmit, let columnID else { return }
         store.addTask(
             title: title,
             notes: notes,
-            status: status,
+            columnID: columnID,
             priority: priority,
             projectID: projectID,
             dueDate: hasDueDate ? dueDate : nil

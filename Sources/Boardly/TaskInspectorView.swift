@@ -34,10 +34,10 @@ struct TaskInspectorView: View {
                     }
 
                     BoardlyFormSection("组织") {
-                        BoardlyFormRow(label: "状态") {
-                            Picker("状态", selection: $task.status) {
-                                ForEach(TaskStatus.allCases) { status in
-                                    Label(status.title, systemImage: status.systemImage).tag(status)
+                        BoardlyFormRow(label: "列") {
+                            Picker("列", selection: $task.columnID) {
+                                ForEach(store.orderedColumns) { column in
+                                    Label(column.name, systemImage: column.symbol).tag(column.id)
                                 }
                             }
                             .pickerStyle(.menu)

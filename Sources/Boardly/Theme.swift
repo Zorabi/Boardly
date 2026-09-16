@@ -48,6 +48,7 @@ enum BoardlyTheme {
     }
 
     static let projectColorOptions: [ProjectColorOption] = [
+        ProjectColorOption(name: "graphite", title: "石墨", color: Color(white: 0.62)),
         ProjectColorOption(name: "violet", title: "紫罗兰", color: Color(red: 117 / 255, green: 103 / 255, blue: 248 / 255)),
         ProjectColorOption(name: "blue", title: "蓝", color: Color(red: 96 / 255, green: 138 / 255, blue: 214 / 255)),
         ProjectColorOption(name: "teal", title: "青", color: Color(red: 79 / 255, green: 179 / 255, blue: 169 / 255)),
@@ -63,23 +64,19 @@ enum BoardlyTheme {
         "flag", "heart", "graduationcap", "airplane", "cart", "wrench", "moon"
     ]
 
+    /// 自定义列可用的 SF Symbol 候选。
+    static let columnSymbolOptions = [
+        "square.grid.2x2", "tray", "circle", "clock", "checkmark.circle.fill",
+        "wrench.and.screwdriver", "testtube.2", "eyeglasses", "shippingbox",
+        "questionmark.circle", "bolt", "flag"
+    ]
+
     static func projectColor(named name: String) -> Color {
         projectColorOptions.first(where: { $0.name == name })?.color ?? accent
     }
 
     static func projectColorTitle(named name: String) -> String {
         projectColorOptions.first(where: { $0.name == name })?.title ?? "紫罗兰"
-    }
-
-    // MARK: 状态颜色（状态永远同时有图标，不单靠颜色区分）
-
-    static func statusColor(_ status: TaskStatus) -> Color {
-        switch status {
-        case .backlog: Color(white: 0.62)
-        case .todo: Color(red: 96 / 255, green: 138 / 255, blue: 214 / 255)
-        case .inProgress: Color(red: 214 / 255, green: 163 / 255, blue: 85 / 255)
-        case .done: Color(red: 98 / 255, green: 179 / 255, blue: 118 / 255)
-        }
     }
 }
 
