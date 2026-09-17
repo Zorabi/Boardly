@@ -139,6 +139,7 @@ struct BoardView: View {
 
 private struct TaskColumnView: View {
     @EnvironmentObject private var store: BoardStore
+    @EnvironmentObject private var settings: BoardlySettings
     let column: BoardColumn
     let searchText: String
     let onCreateTask: (BoardColumn.ID) -> Void
@@ -173,7 +174,7 @@ private struct TaskColumnView: View {
                 .overlay(BoardlyTheme.border)
 
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: settings.cardDensity.taskSpacing) {
                     if tasks.isEmpty {
                         emptyState
                     } else {

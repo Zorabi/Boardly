@@ -3,11 +3,14 @@ import SwiftUI
 @main
 struct BoardlyApp: App {
     @StateObject private var store = BoardStore.live
+    @StateObject private var settings = BoardlySettings()
 
     var body: some Scene {
         WindowGroup {
             BoardWorkspaceView()
                 .environmentObject(store)
+                .environmentObject(settings)
+                .environment(\.dynamicTypeSize, settings.dynamicTypeSize)
                 .frame(minWidth: 960, minHeight: 620)
                 .tint(BoardlyTheme.accent)
                 .preferredColorScheme(.dark)
