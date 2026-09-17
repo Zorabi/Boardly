@@ -680,6 +680,7 @@ final class BoardStoreTests: XCTestCase {
 
         let task = BoardTask(title: "初始标题", columnID: DefaultColumns.todoID)
         let store = BoardStore(tasks: [task], persistenceURL: fileURL)
+        XCTAssertEqual(store.persistenceSuccessRevision, 0, "尚未写盘时不应显示保存成功反馈")
         var updated = task
         updated.title = "终止前的最新标题"
         store.updateTask(updated) // 高频编辑走延迟后台持久化。
@@ -688,6 +689,7 @@ final class BoardStoreTests: XCTestCase {
         let snapshot = try BoardStore.decodeSnapshot(Data(contentsOf: fileURL))
         XCTAssertEqual(snapshot.tasks.first?.title, "终止前的最新标题")
         XCTAssertNil(store.persistenceError)
+        XCTAssertEqual(store.persistenceSuccessRevision, 1, "成功反馈只应由真实落盘完成触发")
     }
 
     func testDebouncedPersistenceEventuallyWritesLatestSnapshotWithoutFlush() async throws {
@@ -711,6 +713,7 @@ final class BoardStoreTests: XCTestCase {
 
         XCTAssertFalse(store.isPersistencePending, "延迟写入必须在合理时间内完成")
         XCTAssertNil(store.persistenceError)
+        XCTAssertEqual(store.persistenceSuccessRevision, 1)
         let snapshot = try BoardStore.decodeSnapshot(Data(contentsOf: fileURL))
         XCTAssertEqual(snapshot.tasks.first?.title, "最终输入")
     }
@@ -727,6 +730,7 @@ final class BoardStoreTests: XCTestCase {
         store.flushPersistence()
 
         XCTAssertNotNil(store.persistenceError, "后台/flush 写盘失败必须保留可观察状态")
+        XCTAssertEqual(store.persistenceSuccessRevision, 0, "写盘失败不得触发保存成功反馈")
     }
 
     // MARK: - 拖放载荷与手势映射
