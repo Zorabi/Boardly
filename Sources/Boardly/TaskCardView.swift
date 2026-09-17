@@ -1,3 +1,4 @@
+import QuartzCore
 import SwiftUI
 
 struct TaskCardView: View {
@@ -10,6 +11,7 @@ struct TaskCardView: View {
 
     @State private var isHovering = false
     @State private var isDropTarget = false
+    @State private var lastDragUpdateTime: CFTimeInterval = 0
 
     private var isSelected: Bool { store.selectedTaskID == task.id }
     private var isInDoneColumn: Bool { store.isDoneColumn(task.columnID) }
@@ -81,13 +83,23 @@ struct TaskCardView: View {
         .highPriorityGesture(
             DragGesture(minimumDistance: 10, coordinateSpace: .named(BoardlyTheme.boardCoordinateSpace))
                 .onChanged { value in
-                    directlyDraggedTaskID = task.id
-                    directDragLocation = value.location
+                    let now = CACurrentMediaTime()
+                    if directlyDraggedTaskID != task.id {
+                        directlyDraggedTaskID = task.id
+                        directDragLocation = value.location
+                        lastDragUpdateTime = now
+                    } else if now - lastDragUpdateTime >= (1.0 / 60.0) {
+                        // 手势事件可能高于屏幕刷新率；限制到 60Hz，避免拖动时
+                        // 让整个看板在每个触控采样点都重新布局。
+                        directDragLocation = value.location
+                        lastDragUpdateTime = now
+                    }
                 }
                 .onEnded { value in
                     let sourceID = task.id
                     directlyDraggedTaskID = nil
                     directDragLocation = nil
+                    lastDragUpdateTime = 0
                     onDirectDragEnded(sourceID, value.location)
                 }
         )
