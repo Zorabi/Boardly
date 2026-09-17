@@ -242,6 +242,7 @@ struct BoardlyTextEditor: View {
         TextEditor(text: $text)
             .font(.body)
             .scrollContentBackground(.hidden)
+            .boardlyScrollers()
             .frame(minHeight: minHeight)
             .padding(6)
             .background(

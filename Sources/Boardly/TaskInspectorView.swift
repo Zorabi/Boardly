@@ -96,6 +96,7 @@ struct TaskInspectorView: View {
                 }
                 .padding(16)
             }
+            .boardlyScrollers()
         }
         .background(BoardlyTheme.canvas)
     }

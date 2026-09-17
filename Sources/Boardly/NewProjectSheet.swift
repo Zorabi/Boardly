@@ -54,6 +54,7 @@ struct NewProjectSheet: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 8)
             }
+            .boardlyScrollers()
 
             Divider()
 
