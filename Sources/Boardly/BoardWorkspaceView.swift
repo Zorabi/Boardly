@@ -88,6 +88,10 @@ struct BoardWorkspaceView: View {
             isSettingsPresented = false
             presentInspector()
         }
+        .onExitCommand {
+            guard isInspectorPresented else { return }
+            closeInspector()
+        }
     }
 
     private var settingsIsOpen: Bool {
