@@ -103,9 +103,9 @@ enum TaskPriority: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var systemImage: String {
         switch self {
-        case .low: "arrow.down"
-        case .medium: "minus"
-        case .high: "arrow.up"
+        case .low: "bookmark"
+        case .medium: "flag"
+        case .high: "flag.fill"
         }
     }
 }

@@ -50,7 +50,9 @@ struct TaskInspectorView: View {
                         BoardlyFormRow(label: "优先级") {
                             Picker("优先级", selection: $task.priority) {
                                 ForEach(TaskPriority.allCases) { priority in
-                                    Label(priority.title, systemImage: priority.systemImage).tag(priority)
+                                    Label(priority.title, systemImage: priority.systemImage)
+                                        .foregroundStyle(BoardlyTheme.priorityColor(for: priority))
+                                        .tag(priority)
                                 }
                             }
                             .pickerStyle(.segmented)

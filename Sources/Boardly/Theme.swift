@@ -28,6 +28,12 @@ enum BoardlyTheme {
     static let selectedBorder = accent
     static let danger = Color(red: 255 / 255, green: 102 / 255, blue: 95 / 255)
 
+    // 优先级令牌：高优先级使用珊瑚红表达紧迫，中优先级使用琥珀色，
+    // 低优先级退回安静的石墨灰，避免与品牌紫和项目蓝混淆。
+    static let priorityHigh = danger
+    static let priorityMedium = Color(red: 214 / 255, green: 163 / 255, blue: 85 / 255)
+    static let priorityLow = Color(white: 0.62)
+
     static let cornerRadiusCard: CGFloat = 9
     static let cornerRadiusField: CGFloat = 8
     static let cornerRadiusSection: CGFloat = 12
@@ -78,6 +84,14 @@ enum BoardlyTheme {
 
     static func projectColorTitle(named name: String) -> String {
         projectColorOptions.first(where: { $0.name == name })?.title ?? "紫罗兰"
+    }
+
+    static func priorityColor(for priority: TaskPriority) -> Color {
+        switch priority {
+        case .low: priorityLow
+        case .medium: priorityMedium
+        case .high: priorityHigh
+        }
     }
 }
 

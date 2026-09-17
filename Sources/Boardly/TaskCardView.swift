@@ -189,7 +189,7 @@ struct TaskCardView: View {
     private var metadata: some View {
         HStack(spacing: 10) {
             Label(task.priority.title, systemImage: task.priority.systemImage)
-                .foregroundStyle(task.priority == .high ? BoardlyTheme.accent : Color.secondary)
+                .foregroundStyle(BoardlyTheme.priorityColor(for: task.priority))
 
             if let dueDate = task.dueDate {
                 Label {
