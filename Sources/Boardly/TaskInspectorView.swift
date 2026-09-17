@@ -103,6 +103,9 @@ struct TaskInspectorView: View {
             .boardlyScrollers()
         }
         .background(BoardlyTheme.canvas)
+        // macOS inspector 不会自动把 Esc 传给自定义关闭按钮；
+        // 使用原生退出命令保留输入控件内的键盘行为，同时关闭详情面板。
+        .onExitCommand(perform: onClose)
     }
 
     private var header: some View {
@@ -114,6 +117,7 @@ struct TaskInspectorView: View {
                 Image(systemName: "xmark")
             }
             .buttonStyle(BoardlyIconButtonStyle())
+            .keyboardShortcut(.cancelAction)
             .accessibilityLabel("关闭任务详情")
         }
         .padding(16)

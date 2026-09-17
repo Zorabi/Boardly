@@ -87,6 +87,7 @@ struct BoardlySettingsView: View {
             .boardlyScrollers()
         }
         .background(BoardlyTheme.canvas)
+        .onExitCommand(perform: onClose)
     }
 
     private var header: some View {
@@ -106,6 +107,7 @@ struct BoardlySettingsView: View {
                 Image(systemName: "xmark")
             }
             .buttonStyle(BoardlyIconButtonStyle())
+            .keyboardShortcut(.cancelAction)
             .accessibilityLabel("关闭看板设置")
         }
         .padding(16)
