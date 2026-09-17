@@ -52,7 +52,7 @@ struct ProjectEditorSheet: View {
                             .labelsHidden()
                         }
 
-                        BoardlyFormRow(label: "颜色") {
+                        BoardlyFormRow(label: "颜色", alignment: .top, labelTopPadding: 7) {
                             LazyVGrid(
                                 columns: [GridItem(.adaptive(minimum: 30), spacing: 8)],
                                 spacing: 8
