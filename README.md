@@ -1,125 +1,126 @@
+<div align="center">
+
 # Boardly
 
-![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-111114?logo=apple&logoColor=white)
-![Swift](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
-![UI](https://img.shields.io/badge/UI-SwiftUI-7567F8)
-![License](https://img.shields.io/badge/license-MIT-2f855a)
+一款原生、离线优先的 macOS 个人任务看板。
 
-Boardly 是一个原生 macOS 个人待办看板，帮助你在一个安静、聚焦的深色工作区里完成任务捕获、排序、推进与复盘。
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white)](https://github.com/Zorabi/Boardly)
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](Package.swift)
+[![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0D96F6)](Sources/Boardly)
+[![MIT License](https://img.shields.io/badge/License-MIT-2F855A)](LICENSE)
 
-它使用 SwiftUI 构建，默认提供 Backlog、待办、进行中和已完成四列，并支持项目、搜索、任务详情 Inspector、原生拖放、键盘操作和本地 JSON 持久化。
+</div>
 
-> 当前仓库是一个可运行的产品原型，优先验证个人任务工作流与 macOS 原生交互，不包含团队协作、在线同步或 AI Agent 能力。
+Boardly 使用 SwiftUI 构建，为个人任务提供项目分类、自定义工作流、拖放排序、任务详情和本地持久化。应用无需账号或网络服务，数据保存在当前 Mac 上。
+
+> [!NOTE]
+> Boardly 目前处于可运行的原型阶段，尚未提供签名安装包或自动更新。请通过 SwiftPM 运行，或使用仓库脚本生成本地 `.app`。
 
 ## 界面预览
 
-截图使用应用示例数据和一个自定义列生成，不包含真实个人任务信息。
+![Boardly 主看板，包含项目侧边栏、搜索和五列任务工作流](docs/images/boardly-board.png)
 
 <p align="center">
-  <img src="docs/images/boardly-board.png" alt="Boardly 深色主看板，展示侧边栏、多个项目和五列任务看板" width="100%">
+  <img src="docs/images/boardly-inspector.png" alt="任务详情 Inspector" width="49%">
+  <img src="docs/images/boardly-settings.png" alt="看板显示设置" width="49%">
 </p>
 
-<p align="center">
-  <img src="docs/images/boardly-inspector.png" alt="Boardly 任务详情 Inspector，展示描述、列、优先级、项目、截止日期和标签" width="49%">
-  <img src="docs/images/boardly-settings.png" alt="Boardly 看板设置，展示字体大小、卡片密度和任务信息显示选项" width="49%">
-</p>
+<p align="center"><sub>截图使用应用内置示例数据，不包含真实个人任务。</sub></p>
 
 ## 功能
 
-- **个人看板**：在项目、未分类、今天和所有任务视图之间快速切换。
-- **可定制列**：新增、重命名、排序和删除看板列；删除列时可以将任务迁移到目标列。
-- **任务详情**：编辑标题、描述、列、优先级、项目、截止日期和标签，所有更改自动保存。
-- **原生交互**：支持卡片拖放、列内排序、移动菜单、搜索和 macOS 键盘快捷键。
-- **本地优先**：无需账号和网络，数据保存在本机；首次启动会加载可直接体验的示例数据。
-- **深色工作区**：固定深色外观，使用 SF Symbols、系统字体和原生窗口行为。
-- **可访问性**：为任务卡片、移动菜单、空状态和表单控件提供 VoiceOver 文案与键盘入口。
+- **自定义工作流**：新增、编辑、排序和删除看板列，并为列设置图标、颜色和完成语义。
+- **任务管理**：记录标题、描述、优先级、项目、截止日期和标签；支持列内排序与跨列拖放。
+- **聚焦视图**：按项目、未分类、今天或所有任务查看看板，并可从工具栏搜索任务。
+- **原生 macOS 体验**：SwiftUI 三栏布局、右侧 Inspector、系统字体、SF Symbols 和键盘操作。
+- **显示偏好**：调整字号、卡片密度，以及任务描述和元数据的显示方式。
+- **本地持久化**：任务自动写入本地 JSON；旧版数据迁移或损坏数据恢复前会保留原始备份。
+- **辅助功能**：支持 VoiceOver 文案、键盘入口和“减弱动态效果”设置。
 
-## 系统要求
+## 快速开始
 
-- macOS 14 或更高版本
+### 环境要求
+
+- macOS 14 Sonoma 或更高版本
 - Swift 6 toolchain
 - Xcode Command Line Tools
 
 项目不依赖第三方 Swift Package。
 
-## 快速开始
-
-在已安装 Swift toolchain 的 macOS 环境中执行：
+### 从源码运行
 
 ```bash
-git clone <repository-url>
-cd todos
+git clone https://github.com/Zorabi/Boardly.git
+cd Boardly
 swift run
 ```
 
-也可以先构建，再运行二进制：
+也可以先构建，再运行调试版二进制：
 
 ```bash
 swift build
 .build/debug/Boardly
 ```
 
-## 打包为 macOS 应用
-
-仓库提供了生成带自定义图标 `.app` 的脚本：
+### 生成 macOS 应用
 
 ```bash
 bash Sources/Boardly/Resources/make-app.sh
 open build/Boardly.app
 ```
 
-脚本会执行 Release 构建、生成 `AppIcon.icns`，并输出 `build/Boardly.app`。本地构建使用 ad-hoc 签名，适合开发与截图，不等同于可公开分发的 Developer ID 签名或公证包。
+脚本会执行 Release 构建、生成应用图标，并输出 `build/Boardly.app`。生成结果使用 ad-hoc 签名，仅适合本地开发和体验，不是经过 Developer ID 签名与公证的发行包。
 
-## 测试
+## 快捷键
+
+| 操作 | 快捷键 |
+| --- | --- |
+| 新建任务 | <kbd>⌘</kbd> <kbd>N</kbd> |
+| 打开或关闭看板设置 | <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>I</kbd> |
+| 关闭任务详情或弹窗 | <kbd>Esc</kbd> |
+| 确认表单 | <kbd>Return</kbd> |
+
+## 数据与隐私
+
+Boardly 不包含账号、在线同步、遥测或后台服务。
+
+| 数据 | 保存位置 |
+| --- | --- |
+| 项目、列和任务 | `~/Library/Application Support/Boardly/board.json` |
+| 字号、卡片密度等显示偏好 | macOS `UserDefaults` |
+| 迁移与恢复备份 | `~/Library/Application Support/Boardly/*.backup` |
+
+首次启动且不存在 `board.json` 时，Boardly 会载入一组示例项目和任务。当前数据格式为 schema v2，并兼容旧版 `status` 字段。
+
+## 开发与测试
+
+运行全部测试：
 
 ```bash
 swift test
 ```
 
-当前测试覆盖：
+测试覆盖数据解码与迁移、自定义列、任务移动与排序、备份恢复，以及显示设置持久化。
 
-- v1 `status` 数据到 v2 自定义列的迁移
-- 自定义列的新增、排序、删除与任务迁移
-- 任务拖放、跨列移动和排序
-- 损坏快照、未来 schema、备份与安全降级
-- 设置项的持久化与恢复默认值
-
-## 数据与隐私
-
-- 任务数据：`~/Library/Application Support/Boardly/board.json`
-- 应用设置：macOS `UserDefaults`
-- 当前实现不包含账号、网络同步、远程上传或后台服务。
-- 数据格式当前为 schema v2；读取旧版本时会迁移 `status` 字段，迁移或恢复前会在同目录保留 `.backup` 文件。
-
-## 项目结构
+主要目录：
 
 ```text
-Sources/Boardly/
-├── BoardlyApp.swift          # 应用入口与窗口配置
-├── BoardWorkspaceView.swift  # 侧栏、看板与 Inspector 容器
-├── BoardStore.swift          # 任务、项目、列和本地持久化
-├── BoardView.swift           # 横向看板与拖放交互
-├── TaskCardView.swift        # 任务卡片
-└── Resources/                # 应用图标与打包脚本
-
-Tests/BoardlyTests/           # 数据、迁移、排序与设置测试
-docs/images/                  # README 界面截图
-docs/PRODUCT_DESIGN.md        # 产品与交互设计
-design-system/todos-mac/      # macOS 设计系统
+Sources/Boardly/           应用源码与打包资源
+Tests/BoardlyTests/        单元测试
+docs/images/               README 截图
+docs/PRODUCT_DESIGN.md     产品与交互设计
+design-system/todos-mac/   macOS 视觉规范
 ```
 
-## 相关文档
+进一步了解设计与实现约束：
 
 - [产品与交互设计](docs/PRODUCT_DESIGN.md)
-- [macOS 设计系统](design-system/todos-mac/MASTER.md)
-- [MIT License](LICENSE)
+- [macOS 视觉规范](design-system/todos-mac/MASTER.md)
 
 ## 贡献
 
-欢迎通过 Issue 或 Pull Request 提交问题、设计建议和代码改进。涉及界面改动时，请附上前后截图，并在提交前运行 `swift test`。
-
-Boardly 的深色界面仅借鉴克制的个人待办工具设计思路；项目与任何第三方产品不存在隶属、赞助或背书关系，也不包含第三方产品的截图或素材。
+欢迎提交 [Issue](https://github.com/Zorabi/Boardly/issues) 或 Pull Request。提交代码前请运行 `swift test`；涉及界面调整时，建议附上变更前后的截图。
 
 ## License
 
-Boardly 使用 [MIT License](LICENSE) 发布。
+Boardly 基于 [MIT License](LICENSE) 发布。
