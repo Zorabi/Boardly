@@ -55,14 +55,14 @@ struct ColumnDeleteSheet: View {
                 if isLastDoneColumn {
                     BoardlyFormSection("无法删除") {
                         Text("这是最后一个完成列，至少需要保留一个。可先把其他列设为完成列，再删除此列。")
-                            .font(.subheadline)
+                            .boardlyFont(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 } else if columnTaskCount > 0 {
                     BoardlyFormSection("任务迁移") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("请选择一个列接收这 \(columnTaskCount) 个任务（按原顺序追加到其末尾）。")
-                                .font(.caption)
+                                .boardlyFont(.caption)
                                 .foregroundStyle(.secondary)
                             ForEach(otherColumns) { target in
                                 migrationRow(target)
@@ -72,7 +72,7 @@ struct ColumnDeleteSheet: View {
                 } else {
                     BoardlyFormSection("确认") {
                         Text("此操作不可撤销；列的顺序调整与其他列不受影响。")
-                            .font(.subheadline)
+                            .boardlyFont(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -103,14 +103,14 @@ struct ColumnDeleteSheet: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: target.symbol)
-                    .font(.system(size: 12, weight: .semibold))
+                    .boardlySystemFont(size: 12, weight: .semibold)
                     .foregroundStyle(BoardlyTheme.projectColor(named: target.colorName))
                 Text(target.name)
-                    .font(.subheadline)
+                    .boardlyFont(.subheadline)
                     .foregroundStyle(.primary)
                 Spacer()
                 Text(store.tasks.filter { $0.columnID == target.id }.count, format: .number)
-                    .font(.caption.monospacedDigit())
+                    .boardlyFont(.caption, monospacedDigits: true)
                     .foregroundStyle(.secondary)
                 if migrationTargetID == target.id {
                     Image(systemName: "checkmark.circle.fill")

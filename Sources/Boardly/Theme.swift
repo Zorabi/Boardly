@@ -81,6 +81,84 @@ enum BoardlyTheme {
     }
 }
 
+// MARK: - 字体缩放
+
+/// 字体设置使用连续比例，而不是只在几个 Dynamic Type 档位之间跳转。
+/// 控件仍保留系统 Dynamic Type 环境，正文则通过这个令牌获得真实的字号变化。
+private struct BoardlyFontScaleKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 1
+}
+
+extension EnvironmentValues {
+    var boardlyFontScale: CGFloat {
+        get { self[BoardlyFontScaleKey.self] }
+        set { self[BoardlyFontScaleKey.self] = newValue }
+    }
+}
+
+enum BoardlyTextStyle {
+    case caption
+    case subheadline
+    case body
+    case headline
+    case title3
+
+    var baseSize: CGFloat {
+        switch self {
+        case .caption: 12
+        case .subheadline: 13
+        case .body: 14
+        case .headline: 17
+        case .title3: 20
+        }
+    }
+}
+
+private struct BoardlyFontModifier: ViewModifier {
+    @Environment(\.boardlyFontScale) private var scale
+    let style: BoardlyTextStyle
+    let weight: Font.Weight
+    let monospacedDigits: Bool
+
+    func body(content: Content) -> some View {
+        var font = Font.system(size: style.baseSize * scale, weight: weight)
+        if monospacedDigits {
+            font = font.monospacedDigit()
+        }
+        return content.font(font)
+    }
+}
+
+private struct BoardlySystemFontModifier: ViewModifier {
+    @Environment(\.boardlyFontScale) private var scale
+    let size: CGFloat
+    let weight: Font.Weight
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: size * scale, weight: weight))
+    }
+}
+
+extension View {
+    func boardlyFont(
+        _ style: BoardlyTextStyle,
+        weight: Font.Weight = .regular,
+        monospacedDigits: Bool = false
+    ) -> some View {
+        modifier(
+            BoardlyFontModifier(
+                style: style,
+                weight: weight,
+                monospacedDigits: monospacedDigits
+            )
+        )
+    }
+
+    func boardlySystemFont(size: CGFloat, weight: Font.Weight = .regular) -> some View {
+        modifier(BoardlySystemFontModifier(size: size, weight: weight))
+    }
+}
+
 // MARK: - 按钮样式
 
 /// 主操作按钮：强调色填充，每个界面只保留一个。
@@ -89,7 +167,7 @@ struct BoardlyPrimaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.medium))
+            .boardlyFont(.subheadline, weight: .medium)
             .foregroundStyle(.white)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
@@ -107,7 +185,7 @@ struct BoardlySecondaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.medium))
+            .boardlyFont(.subheadline, weight: .medium)
             .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -129,7 +207,7 @@ struct BoardlyIconButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium))
+            .boardlySystemFont(size: 12, weight: .medium)
             .foregroundStyle(isEnabled ? Color.secondary : Color(white: 0.35))
             .frame(width: size, height: size)
             .background(
@@ -146,7 +224,7 @@ struct BoardlyDestructiveButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.medium))
+            .boardlyFont(.subheadline, weight: .medium)
             .frame(maxWidth: .infinity)
             .foregroundStyle(isEnabled ? BoardlyTheme.danger : BoardlyTheme.danger.opacity(0.4))
             .padding(.vertical, 7)
@@ -176,7 +254,7 @@ struct BoardlyFormSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .boardlyFont(.caption, weight: .semibold)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 12) {
                 content
@@ -203,7 +281,7 @@ struct BoardlyFormRow<Control: View>: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.subheadline)
+                .boardlyFont(.subheadline)
                 .foregroundStyle(.secondary)
                 .frame(width: 64, alignment: .leading)
             control
@@ -240,7 +318,7 @@ struct BoardlyTextEditor: View {
 
     var body: some View {
         TextEditor(text: $text)
-            .font(.body)
+            .boardlyFont(.body)
             .scrollContentBackground(.hidden)
             .boardlyScrollers()
             .frame(minHeight: minHeight)
@@ -252,7 +330,7 @@ struct BoardlyTextEditor: View {
             .overlay(alignment: .topLeading) {
                 if text.isEmpty, let prompt {
                     Text(prompt)
-                        .font(.body)
+                        .boardlyFont(.body)
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
@@ -275,9 +353,9 @@ struct BoardlySheetHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.title3.weight(.semibold))
+                .boardlyFont(.title3, weight: .semibold)
             Text(subtitle)
-                .font(.caption)
+                .boardlyFont(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -6,6 +6,9 @@ import SwiftUI
 /// 与任务数据混在一起。设置通过 UserDefaults 持久化，修改后立即反映到当前窗口。
 @MainActor
 final class BoardlySettings: ObservableObject {
+    private static let minimumFontScale = 0.85
+    private static let maximumFontScale = 1.35
+
     enum FontSizePreset: String, CaseIterable, Identifiable, Sendable {
         case small
         case standard
@@ -83,7 +86,14 @@ final class BoardlySettings: ObservableObject {
     private let defaults: UserDefaults
 
     @Published var fontScale: Double {
-        didSet { defaults.set(fontScale, forKey: Key.fontScale) }
+        didSet {
+            let bounded = min(max(fontScale, Self.minimumFontScale), Self.maximumFontScale)
+            if bounded != fontScale {
+                fontScale = bounded
+                return
+            }
+            defaults.set(fontScale, forKey: Key.fontScale)
+        }
     }
 
     @Published var showTaskNotes: Bool {
@@ -102,7 +112,7 @@ final class BoardlySettings: ObservableObject {
         self.defaults = defaults
 
         let savedScale = defaults.object(forKey: Key.fontScale) as? Double ?? FontSizePreset.standard.scale
-        self.fontScale = min(max(savedScale, 0.85), 1.35)
+        self.fontScale = min(max(savedScale, Self.minimumFontScale), Self.maximumFontScale)
         self.showTaskNotes = defaults.object(forKey: Key.showTaskNotes) as? Bool ?? true
         self.showTaskMetadata = defaults.object(forKey: Key.showTaskMetadata) as? Bool ?? true
         self.cardDensity = CardDensity(

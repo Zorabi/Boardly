@@ -44,14 +44,32 @@ struct BoardWorkspaceView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
-            BoardView(searchText: searchText) { columnID in
-                newTaskContext = NewTaskContext(columnID: columnID)
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    Button {
+                        openSettings()
+                    } label: {
+                        Label("设置", systemImage: "gearshape")
+                    }
+                    .buttonStyle(BoardlySecondaryButtonStyle())
+                    .keyboardShortcut("i", modifiers: [.command, .option])
+                    .help("打开看板设置 (⌥⌘I)")
+                    .accessibilityLabel("打开看板设置")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(BoardlyTheme.canvas)
+
+                BoardView(searchText: searchText) { columnID in
+                    newTaskContext = NewTaskContext(columnID: columnID)
+                }
             }
             .navigationTitle(store.selectedScopeTitle)
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "搜索任务")
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
+            ToolbarItem(placement: .navigation) {
                 Button {
                     newTaskContext = NewTaskContext(columnID: nil)
                 } label: {
@@ -59,14 +77,6 @@ struct BoardWorkspaceView: View {
                 }
                 .keyboardShortcut("n", modifiers: .command)
                 .help("新建任务 (⌘N)")
-
-                Button {
-                    toggleInspector()
-                } label: {
-                    Label("任务详情", systemImage: "sidebar.right")
-                }
-                .keyboardShortcut("i", modifiers: [.command, .option])
-                .help("显示或隐藏任务详情；未选择任务时打开看板设置 (⌥⌘I)")
             }
         }
         .inspector(isPresented: $isInspectorPresented) {
@@ -84,14 +94,9 @@ struct BoardWorkspaceView: View {
         }
     }
 
-    private func toggleInspector() {
-        if isInspectorPresented {
-            isInspectorPresented = false
-        } else {
-            // 没有选中任务时，右上角入口仍然有明确用途：直接打开看板设置。
-            isSettingsPresented = store.selectedTaskID == nil
-            presentInspector()
-        }
+    private func openSettings() {
+        isSettingsPresented = true
+        presentInspector()
     }
 
     private func presentInspector() {

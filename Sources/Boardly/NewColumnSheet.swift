@@ -73,7 +73,7 @@ struct NewColumnSheet: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("完成列")
                             Text("该列任务视为已完成：不计入侧栏未完成数，看板中置灰显示。")
-                                .font(.caption)
+                                .boardlyFont(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }

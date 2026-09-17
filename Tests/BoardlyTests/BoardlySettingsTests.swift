@@ -33,6 +33,10 @@ final class BoardlySettingsTests: XCTestCase {
         XCTAssertFalse(reloaded.showTaskNotes)
         XCTAssertFalse(reloaded.showTaskMetadata)
         XCTAssertEqual(reloaded.cardDensity, .compact)
+
+        settings.fontScale = 1.07
+        let smoothScale = BoardlySettings(defaults: defaults)
+        XCTAssertEqual(smoothScale.fontScale, 1.07, accuracy: 0.001)
     }
 
     func testResetRestoresDefaults() {

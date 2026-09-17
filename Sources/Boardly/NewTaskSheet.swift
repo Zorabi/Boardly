@@ -41,7 +41,7 @@ struct NewTaskSheet: View {
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text("描述")
-                                .font(.caption)
+                                .boardlyFont(.caption)
                                 .foregroundStyle(.secondary)
                             BoardlyTextEditor(text: $notes, minHeight: 84, prompt: "补充背景或完成标准")
                         }

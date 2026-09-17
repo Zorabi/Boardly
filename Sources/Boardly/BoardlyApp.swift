@@ -10,6 +10,7 @@ struct BoardlyApp: App {
             BoardWorkspaceView()
                 .environmentObject(store)
                 .environmentObject(settings)
+                .environment(\.boardlyFontScale, settings.fontScale)
                 .environment(\.dynamicTypeSize, settings.dynamicTypeSize)
                 .frame(minWidth: 960, minHeight: 620)
                 .tint(BoardlyTheme.accent)

@@ -41,7 +41,7 @@ struct SidebarView: View {
                 Image(systemName: "checkmark.seal")
                 Text("所有更改已保存")
             }
-            .font(.caption)
+            .boardlyFont(.caption)
             .foregroundStyle(.secondary)
             .padding(.vertical, 8)
         }
@@ -82,7 +82,7 @@ struct SidebarView: View {
             }
             Spacer(minLength: 4)
             Text(store.taskCount(in: project.id), format: .number)
-                .font(.caption.monospacedDigit())
+                .boardlyFont(.caption, monospacedDigits: true)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("\(store.taskCount(in: project.id)) 个任务")
         }
@@ -138,7 +138,7 @@ private struct SidebarRow: View {
                 Text(title)
                 Spacer()
                 Text(count, format: .number)
-                    .font(.caption.monospacedDigit())
+                    .boardlyFont(.caption, monospacedDigits: true)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("\(count) 个任务")
             }
