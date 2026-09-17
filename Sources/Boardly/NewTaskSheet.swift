@@ -10,6 +10,7 @@ struct NewTaskSheet: View {
     @State private var projectID: UUID?
     @State private var hasDueDate = false
     @State private var dueDate = Date.now
+    @State private var submissionError: String?
     @FocusState private var focusedField: Field?
 
     private enum Field { case title }
@@ -43,7 +44,7 @@ struct NewTaskSheet: View {
                             Text("描述")
                                 .boardlyFont(.caption)
                                 .foregroundStyle(.secondary)
-                            BoardlyTextEditor(text: $notes, minHeight: 84, prompt: "补充背景或完成标准")
+                            BoardlyTextEditor(text: $notes, height: 84, prompt: "补充背景或完成标准")
                         }
                     }
 
@@ -93,6 +94,13 @@ struct NewTaskSheet: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
+
+                    if let submissionError {
+                        Label(submissionError, systemImage: "exclamationmark.triangle")
+                            .boardlyFont(.caption)
+                            .foregroundStyle(BoardlyTheme.danger)
+                            .accessibilityLabel("无法添加任务：\(submissionError)")
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 8)
@@ -115,7 +123,7 @@ struct NewTaskSheet: View {
         }
         .frame(width: 480, height: 560)
         .onAppear {
-            if columnID == nil {
+            if !store.columns.contains(where: { $0.id == columnID }) {
                 columnID = store.orderedColumns.first?.id
             }
             if case let .project(id) = store.selectedScope { projectID = id }
@@ -125,14 +133,19 @@ struct NewTaskSheet: View {
 
     private func submit() {
         guard canSubmit, let columnID else { return }
-        store.addTask(
+        submissionError = nil
+        guard store.addTask(
             title: title,
             notes: notes,
             columnID: columnID,
             priority: priority,
             projectID: projectID,
             dueDate: hasDueDate ? dueDate : nil
-        )
+        ) != nil else {
+            submissionError = "所选列已不存在，请重新选择后再保存。"
+            self.columnID = store.orderedColumns.first?.id
+            return
+        }
         dismiss()
     }
 }

@@ -33,6 +33,7 @@ struct BoardWorkspaceView: View {
     @State private var newTaskContext: NewTaskContext?
     @State private var isInspectorPresented = false
     @State private var isSettingsPresented = false
+    @State private var inspectedTaskID: BoardTask.ID?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     /// 携带目标列的新建任务上下文：从工具栏进入默认首列，从列头进入则预填该列。
@@ -77,20 +78,17 @@ struct BoardWorkspaceView: View {
                 .environmentObject(store)
         }
         .onChange(of: store.selectedTaskID) { _, selectedTaskID in
-            guard selectedTaskID != nil else {
+            guard let selectedTaskID else {
                 // 列删除会迁移并清除原列的选中任务；详情检查器也应随之关闭，
                 // 避免目标列（尤其是 Backlog）留下误导性的选中高亮。
                 if !isSettingsPresented, isInspectorPresented {
-                    closeInspector()
+                    setInspectorPresented(false)
                 }
                 return
             }
+            inspectedTaskID = selectedTaskID
             isSettingsPresented = false
             presentInspector()
-        }
-        .onExitCommand {
-            guard isInspectorPresented else { return }
-            closeInspector()
         }
     }
 
@@ -132,47 +130,45 @@ struct BoardWorkspaceView: View {
     }
 
     private func closeInspector() {
-        isSettingsPresented = false
+        store.selectedTaskID = nil
+        setInspectorPresented(false)
+    }
+
+    private func setInspectorPresented(_ isPresented: Bool) {
         if reduceMotion {
-            isInspectorPresented = false
+            isInspectorPresented = isPresented
         } else {
-            withAnimation(.easeIn(duration: 0.08)) {
-                isInspectorPresented = false
+            withAnimation(isPresented ? .easeOut(duration: 0.12) : .easeIn(duration: 0.08)) {
+                isInspectorPresented = isPresented
             }
         }
     }
 
     private func presentInspector() {
-        if reduceMotion {
-            isInspectorPresented = true
-        } else {
-            withAnimation(.easeOut(duration: 0.12)) {
-                isInspectorPresented = true
-            }
-        }
+        setInspectorPresented(true)
     }
 
     @ViewBuilder
     private var inspectorContent: some View {
-        if isSettingsPresented || store.selectedTaskID == nil {
+        if isSettingsPresented {
             BoardlySettingsView(
                 onClose: { closeInspector() },
                 onBack: store.selectedTaskID == nil ? nil : { isSettingsPresented = false }
             )
-        } else if let selectedTask = store.task(withID: store.selectedTaskID) {
+        } else if let selectedTask = store.task(withID: inspectedTaskID) {
             TaskInspectorView(
-                task: Binding(
-                    get: { store.task(withID: selectedTask.id) ?? selectedTask },
-                    set: { updatedTask in
-                        store.updateTask(updatedTask)
-                    }
-                ),
+                task: selectedTask,
+                onSave: { updatedTask in
+                    store.saveTask(updatedTask)
+                    closeInspector()
+                },
                 onClose: { closeInspector() },
                 onDelete: {
                     store.deleteTask(id: selectedTask.id)
                     closeInspector()
                 }
             )
+            .id(selectedTask.id)
         } else {
             ContentUnavailableView(
                 "未选择任务",

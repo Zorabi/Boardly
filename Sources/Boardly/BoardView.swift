@@ -126,8 +126,7 @@ struct BoardView: View {
                     .boardlyFont(.caption, weight: .medium)
             }
             .foregroundStyle(.secondary)
-            .frame(width: 120)
-            .frame(maxHeight: .infinity)
+            .frame(width: 120, height: 88)
             .background(
                 RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous)
                     .fill(BoardlyTheme.column.opacity(0.5))
@@ -138,6 +137,7 @@ struct BoardView: View {
             }
         }
         .buttonStyle(BoardlyPlainButtonStyle())
+        .help("新增看板列")
         .accessibilityLabel("新增看板列")
         .accessibilityHint("创建自定义状态列，例如“测试中”或“验证中”")
     }

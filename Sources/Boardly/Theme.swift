@@ -341,15 +341,15 @@ struct BoardlyTextFieldStyle: TextFieldStyle {
 /// 多行文本编辑器：与 BoardlyTextFieldStyle 相同的表面。
 struct BoardlyTextEditor: View {
     @Binding var text: String
-    var minHeight: CGFloat = 110
+    var height: CGFloat = 110
     var prompt: String?
 
     var body: some View {
         TextEditor(text: $text)
             .boardlyFont(.body)
             .scrollContentBackground(.hidden)
-            .boardlyScrollers()
-            .frame(minHeight: minHeight)
+            .scrollIndicators(.automatic)
+            .frame(height: height)
             .padding(6)
             .background(
                 RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusField, style: .continuous)
@@ -406,6 +406,7 @@ private final class BoardlyScroller: NSScroller {
     }
 
     override func drawKnob() {
+        guard isEnabled else { return }
         let knobRect = rect(for: .knob).insetBy(dx: 2, dy: 2)
         guard !knobRect.isEmpty else { return }
         knobColor.setFill()
@@ -413,10 +414,9 @@ private final class BoardlyScroller: NSScroller {
     }
 }
 
-/// 全应用唯一的滚动条主题实现：定位最近的宿主 NSScrollView 及其嵌套
-/// 滚动容器，把横/纵 scroller 切到 overlay 样式（悬浮、无亮色轨道槽，
-/// 不会出现系统亮色 legacy 滚动条），并把滑块着色为 Theme 的 accent 同源色。
-/// 看板横向、列内纵向、表单 ScrollView 与 TextEditor 内部滚动区共用这一个实现。
+/// 全应用滚动容器主题：定位最近的宿主 NSScrollView 及其嵌套容器，
+/// 把普通横/纵 scroller 切到 overlay 样式并使用主题色。
+/// TextEditor 保留 AppKit 原生自动隐藏滚动条，避免无溢出时出现禁用的满高滑块。
 private struct BoardlyScrollerThemer: NSViewRepresentable {
     final class Coordinator {
         var didTheme = false
@@ -481,6 +481,14 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
     }
 
     private static func theme(scrollView: NSScrollView) {
+        // TextEditor 自带完整的 AppKit 文本滚动行为。保留其原生 overlay scroller，
+        // 让短文本自动隐藏、长文本溢出后才出现，避免禁用状态下的满高“假滑块”。
+        if scrollView.documentView is NSTextView {
+            scrollView.scrollerStyle = .overlay
+            scrollView.autohidesScrollers = true
+            return
+        }
+
         // overlay：无系统亮色轨道槽、悬浮不占内容空间；自定义 NSScroller
         // 绘制固定的 Boardly 深色轨道和紫色滑块，避免系统外观覆盖主题。
         if scrollView.scrollerStyle != .overlay {
@@ -488,12 +496,12 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
         }
         let darkAppearance = NSAppearance(named: .vibrantDark)
 
-        if !(scrollView.verticalScroller is BoardlyScroller) {
+        if scrollView.hasVerticalScroller, !(scrollView.verticalScroller is BoardlyScroller) {
             let scroller = BoardlyScroller(frame: scrollView.verticalScroller?.frame ?? .zero)
             scroller.appearance = darkAppearance
             scrollView.verticalScroller = scroller
         }
-        if !(scrollView.horizontalScroller is BoardlyScroller) {
+        if scrollView.hasHorizontalScroller, !(scrollView.horizontalScroller is BoardlyScroller) {
             let scroller = BoardlyScroller(frame: scrollView.horizontalScroller?.frame ?? .zero)
             scroller.appearance = darkAppearance
             scrollView.horizontalScroller = scroller

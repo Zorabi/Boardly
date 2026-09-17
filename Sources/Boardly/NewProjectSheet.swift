@@ -24,11 +24,13 @@ struct NewProjectSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     BoardlyFormSection("基本信息") {
-                        TextField("项目名称", text: $name, prompt: Text("例如：家庭改造"))
-                            .textFieldStyle(BoardlyTextFieldStyle())
-                            .focused($focusedField, equals: .name)
-                            .onSubmit(createProject)
-                            .accessibilityHint("必填")
+                        BoardlyFormRow(label: "名称") {
+                            TextField("项目名称", text: $name, prompt: Text("例如：家庭改造"))
+                                .textFieldStyle(BoardlyTextFieldStyle())
+                                .focused($focusedField, equals: .name)
+                                .onSubmit(createProject)
+                                .accessibilityHint("必填")
+                        }
                     }
 
                     BoardlyFormSection("外观") {
@@ -43,11 +45,15 @@ struct NewProjectSheet: View {
                         }
 
                         BoardlyFormRow(label: "颜色") {
-                            LazyHGrid(rows: [GridItem(.fixed(30))], spacing: 8) {
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 30), spacing: 8)],
+                                spacing: 8
+                            ) {
                                 ForEach(BoardlyTheme.projectColorOptions) { option in
                                     colorSwatch(option)
                                 }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
@@ -70,7 +76,7 @@ struct NewProjectSheet: View {
             }
             .padding(16)
         }
-        .frame(width: 420, height: 360)
+        .frame(width: 420, height: 420)
         .onAppear { focusedField = .name }
     }
 
