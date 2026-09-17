@@ -77,6 +77,10 @@ struct BoardView: View {
                 }
             }
         }
+        // 拖动与输入期间只更新必要状态，不让 SwiftUI 为整个看板生成隐式布局动画。
+        .transaction { transaction in
+            transaction.animation = nil
+        }
     }
 
     private var draggedTask: BoardTask? {
@@ -131,7 +135,7 @@ struct BoardView: View {
                     .strokeBorder(BoardlyTheme.border, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(BoardlyPlainButtonStyle())
         .accessibilityLabel("新增看板列")
         .accessibilityHint("创建自定义状态列，例如“测试中”或“验证中”")
     }

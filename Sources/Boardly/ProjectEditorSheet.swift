@@ -99,7 +99,7 @@ struct ProjectEditorSheet: View {
             .frame(width: 30, height: 30)
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(BoardlyPlainButtonStyle())
         .accessibilityLabel(option.title)
         .accessibilityAddTraits(draft.colorName == option.name ? .isSelected : [])
     }

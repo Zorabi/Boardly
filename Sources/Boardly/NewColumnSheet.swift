@@ -162,7 +162,7 @@ struct NewColumnSheet: View {
             .frame(width: 30, height: 30)
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(BoardlyPlainButtonStyle())
         .accessibilityLabel(option.title)
         .accessibilityAddTraits(colorName == option.name ? .isSelected : [])
     }

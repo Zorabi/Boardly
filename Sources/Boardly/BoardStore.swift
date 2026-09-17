@@ -9,6 +9,12 @@ final class BoardStore: ObservableObject {
     @Published var selectedScope: SidebarScope = .all
     @Published var selectedTaskID: BoardTask.ID?
     private let persistenceURL: URL?
+    /// 文本编辑会连续触发 updateTask；把频繁落盘放到后台并短暂合并，避免主线程卡顿。
+    private let persistenceQueue = DispatchQueue(
+        label: "dev.boardly.persistence",
+        qos: .utility
+    )
+    private var pendingPersistence: DispatchWorkItem?
 
     init(
         projects: [Project] = [],
@@ -155,6 +161,7 @@ final class BoardStore: ObservableObject {
         }
 
         let removedTasks = tasks(inRaw: id).sorted { $0.sortOrder < $1.sortOrder }
+        let removedTaskIDs = Set(removedTasks.map(\.id))
         let nextOrder = (tasks(inRaw: targetID).map(\.sortOrder).max() ?? -1) + 1
         for (offset, var task) in removedTasks.enumerated() {
             task.columnID = targetID
@@ -162,6 +169,11 @@ final class BoardStore: ObservableObject {
             if let index = tasks.firstIndex(where: { $0.id == task.id }) {
                 tasks[index] = task
             }
+        }
+        // 被删列中的任务会迁移到目标列，但不应继续保持“选中”状态，
+        // 否则用户会误以为目标列（常见是 Backlog）被高亮选中。
+        if let selectedTaskID, removedTaskIDs.contains(selectedTaskID) {
+            self.selectedTaskID = nil
         }
         columns.removeAll { $0.id == id }
         normalizeColumnOrder()
@@ -281,7 +293,7 @@ final class BoardStore: ObservableObject {
     func updateTask(_ updatedTask: BoardTask) {
         guard let index = tasks.firstIndex(where: { $0.id == updatedTask.id }) else { return }
         tasks[index] = updatedTask
-        persist()
+        persistDebounced()
     }
 
     func moveTask(id: BoardTask.ID, to columnID: BoardColumn.ID, before destinationID: BoardTask.ID? = nil) {
@@ -358,18 +370,47 @@ final class BoardStore: ObservableObject {
 
     private func persist() {
         guard let persistenceURL else { return }
+        pendingPersistence?.cancel()
         do {
-            try FileManager.default.createDirectory(
-                at: persistenceURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let data = try JSONEncoder().encode(
-                StoreSnapshot(projects: projects, columns: columns, tasks: tasks)
-            )
-            try data.write(to: persistenceURL, options: .atomic)
+            let data = try encodedSnapshot()
+            // 与后台合并写入共用同一串行队列，避免旧快照在新快照之后完成写入。
+            try persistenceQueue.sync {
+                try Self.writeSnapshot(data, to: persistenceURL)
+            }
         } catch {
             assertionFailure("Unable to persist Boardly data: \(error)")
         }
+    }
+
+    /// 只用于高频字段编辑：编码在主线程完成，实际原子写入在 utility 队列执行，
+    /// 120ms 内的连续输入合并为一次写盘，避免每个字符都阻塞界面。
+    private func persistDebounced() {
+        guard let persistenceURL else { return }
+        pendingPersistence?.cancel()
+        do {
+            let data = try encodedSnapshot()
+            let work = DispatchWorkItem { [data, persistenceURL] in
+                try? Self.writeSnapshot(data, to: persistenceURL)
+            }
+            pendingPersistence = work
+            persistenceQueue.asyncAfter(deadline: .now() + 0.12, execute: work)
+        } catch {
+            assertionFailure("Unable to encode Boardly data: \(error)")
+        }
+    }
+
+    private func encodedSnapshot() throws -> Data {
+        try JSONEncoder().encode(
+            StoreSnapshot(projects: projects, columns: columns, tasks: tasks)
+        )
+    }
+
+    nonisolated private static func writeSnapshot(_ data: Data, to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: url, options: .atomic)
     }
 
     /// 解码后的快照：schemaVersion 标记来源版本，供加载侧决定是否写迁移备份。
