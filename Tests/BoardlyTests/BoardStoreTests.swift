@@ -218,6 +218,7 @@ final class BoardStoreTests: XCTestCase {
 
         let safeStore = BoardStore.load(persistenceURL: unreadableURL)
         XCTAssertTrue(safeStore.tasks.isEmpty, "读取失败的安全 store 不得以示例任务冒充")
+        XCTAssertNotNil(safeStore.persistenceError, "仅内存模式必须明确暴露保存不可用状态")
         safeStore.addTask(title: "不应落盘", notes: "", columnID: DefaultColumns.todoID, priority: .medium, projectID: nil, dueDate: nil)
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadableURL.path)
         XCTAssertEqual(try Data(contentsOf: unreadableURL), originalData, "不可读原文件不得被覆盖")
@@ -385,6 +386,7 @@ final class BoardStoreTests: XCTestCase {
 
         let cleanStore = BoardStore.load(persistenceURL: corruptURL)
         XCTAssertTrue(cleanStore.tasks.isEmpty)
+        XCTAssertNotNil(cleanStore.persistenceError, "备份失败后不得误报所有更改已保存")
         cleanStore.addTask(title: "不应落盘", notes: "", columnID: DefaultColumns.todoID, priority: .medium, projectID: nil, dueDate: nil)
         XCTAssertEqual(try Data(contentsOf: corruptURL), corruptData, "内存 store 的修改不得写回未备份的原文件")
         XCTAssertTrue(
@@ -411,6 +413,7 @@ final class BoardStoreTests: XCTestCase {
         let memoryStore = BoardStore.load(persistenceURL: legacyURL)
         XCTAssertEqual(memoryStore.tasks.first?.title, "旧任务", "解码成功的数据应加载进内存 store")
         XCTAssertEqual(memoryStore.tasks.first?.columnID, DefaultColumns.todoID)
+        XCTAssertNotNil(memoryStore.persistenceError, "迁移备份失败后不得误报所有更改已保存")
         memoryStore.addColumn(name: "也不应落盘", symbol: "circle", colorName: "blue")
         XCTAssertEqual(try Data(contentsOf: legacyURL), legacyData, "备份失败的迁移不得让后续写入覆盖原 v1 文件")
     }
@@ -553,24 +556,25 @@ final class BoardStoreTests: XCTestCase {
         ))
     }
 
-    /// Inspector 改列的等价 store 流程：必须走 moveTask（目标列尾追加 + 源列重排），
-    /// 而不是直接 updateTask 改 columnID（会留下重复 sortOrder 与不确定顺序）。
-    func testInspectorColumnChangeFlowPreservesOrdering() {
+    /// Inspector 显式保存时，字段修改与跨列移动必须原子完成；目标列尾追加，
+    /// 源列与目标列排序连续，不能留下重复 sortOrder。
+    func testInspectorSaveAcrossColumnsPreservesOrderingAndDetails() {
         let sourceTask0 = BoardTask(title: "S0", columnID: DefaultColumns.todoID, sortOrder: 0)
         let sourceTask1 = BoardTask(title: "S1", columnID: DefaultColumns.todoID, sortOrder: 1)
         let targetTask = BoardTask(title: "T0", columnID: DefaultColumns.backlogID, sortOrder: 1)
         let moverID = sourceTask1.id
         let store = BoardStore(tasks: [sourceTask0, sourceTask1, targetTask])
 
-        // Inspector 列 Picker 的新值 → store.moveTask（列尾追加）。
-        store.moveTask(id: moverID, to: DefaultColumns.backlogID)
-        if let updated = store.task(withID: moverID) {
-            // 回写草稿（与 columnBinding 一致）。
-            store.updateTask(updated)
-        }
+        var draft = sourceTask1
+        draft.title = "已更新"
+        draft.notes = "显式保存"
+        draft.columnID = DefaultColumns.backlogID
+        store.saveTask(draft)
 
         XCTAssertEqual(store.tasks(in: DefaultColumns.backlogID).map(\.id), [targetTask.id, moverID], "改列后追加到目标列末尾")
         XCTAssertEqual(store.tasks(in: DefaultColumns.todoID).map(\.id), [sourceTask0.id])
+        XCTAssertEqual(store.task(withID: moverID)?.title, "已更新")
+        XCTAssertEqual(store.task(withID: moverID)?.notes, "显式保存")
         let sourceOrders = store.tasks.filter { $0.columnID == DefaultColumns.todoID }.map(\.sortOrder)
         let targetOrders = store.tasks.filter { $0.columnID == DefaultColumns.backlogID }.map(\.sortOrder)
         XCTAssertEqual(sourceOrders, sourceOrders.sorted(), "源列重排后顺序连续")
@@ -614,6 +618,38 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(store.taskCount(in: project.id), 1, "完成语义列（含自定义）的任务不计入未完成计数")
     }
 
+    func testAddTaskRevalidatesColumnAndNormalizesMissingProject() throws {
+        let store = BoardStore()
+
+        XCTAssertNil(store.addTask(
+            title: "失效列",
+            notes: "",
+            columnID: UUID(),
+            priority: .medium,
+            projectID: nil,
+            dueDate: nil
+        ))
+        XCTAssertTrue(store.tasks.isEmpty, "列在表单提交前被删除时不得静默创建或关闭后丢失输入")
+
+        let taskID = try XCTUnwrap(store.addTask(
+            title: "项目已删除",
+            notes: "",
+            columnID: DefaultColumns.todoID,
+            priority: .medium,
+            projectID: UUID(),
+            dueDate: nil
+        ))
+        XCTAssertNil(store.task(withID: taskID)?.projectID, "失效项目引用必须归一为未分类")
+    }
+
+    func testSnapshotDanglingProjectReferenceIsNormalizedToInbox() throws {
+        let json = #"{"schemaVersion":2,"projects":[],"columns":[{"id":"5F1F9E4A-2E1B-4B6D-9A71-0C1D2E3F4002","name":"待办","symbol":"circle","colorName":"blue","sortOrder":0,"isDone":false}],"tasks":[{"id":"aaaaaaaa-0000-0000-0000-000000000011","title":"悬空项目","columnID":"5F1F9E4A-2E1B-4B6D-9A71-0C1D2E3F4002","projectID":"bbbbbbbb-0000-0000-0000-000000000011","sortOrder":0}]}"#
+
+        let snapshot = try BoardStore.decodeSnapshot(Data(json.utf8))
+
+        XCTAssertNil(snapshot.tasks.first?.projectID)
+    }
+
     func testTaskQuerySearchesAllFieldsAndInvalidatesAfterUpdate() {
         let task = BoardTask(
             title: "标题",
@@ -652,6 +688,31 @@ final class BoardStoreTests: XCTestCase {
         let snapshot = try BoardStore.decodeSnapshot(Data(contentsOf: fileURL))
         XCTAssertEqual(snapshot.tasks.first?.title, "终止前的最新标题")
         XCTAssertNil(store.persistenceError)
+    }
+
+    func testDebouncedPersistenceEventuallyWritesLatestSnapshotWithoutFlush() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("board.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let task = BoardTask(title: "初始标题", columnID: DefaultColumns.todoID)
+        let store = BoardStore(tasks: [task], persistenceURL: fileURL)
+        var updated = task
+        updated.title = "第一次输入"
+        store.updateTask(updated)
+        updated.title = "最终输入"
+        store.updateTask(updated)
+
+        XCTAssertTrue(store.isPersistencePending)
+        let deadline = Date.now.addingTimeInterval(2)
+        while store.isPersistencePending, Date.now < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        XCTAssertFalse(store.isPersistencePending, "延迟写入必须在合理时间内完成")
+        XCTAssertNil(store.persistenceError)
+        let snapshot = try BoardStore.decodeSnapshot(Data(contentsOf: fileURL))
+        XCTAssertEqual(snapshot.tasks.first?.title, "最终输入")
     }
 
     func testFlushPersistencePublishesWriteFailure() throws {

@@ -41,12 +41,14 @@ final class BoardStore: ObservableObject {
         projects: [Project] = [],
         columns: [BoardColumn] = DefaultColumns.makeDefaults(),
         tasks: [BoardTask] = [],
-        persistenceURL: URL? = nil
+        persistenceURL: URL? = nil,
+        initialPersistenceError: String? = nil
     ) {
         self.projects = projects
         self.columns = Self.normalized(columns)
         self.tasks = tasks
         self.persistenceURL = persistenceURL
+        persistenceError = initialPersistenceError
     }
 
     nonisolated private static func normalized(_ columns: [BoardColumn]) -> [BoardColumn] {
@@ -289,6 +291,7 @@ final class BoardStore: ObservableObject {
 
     // MARK: - 任务变更
 
+    @discardableResult
     func addTask(
         title: String,
         notes: String,
@@ -296,9 +299,15 @@ final class BoardStore: ObservableObject {
         priority: TaskPriority,
         projectID: UUID?,
         dueDate: Date?
-    ) {
+    ) -> BoardTask.ID? {
         let cleanedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanedTitle.isEmpty, columns.contains(where: { $0.id == columnID }) else { return }
+        guard !cleanedTitle.isEmpty, columns.contains(where: { $0.id == columnID }) else { return nil }
+
+        // 多窗口下项目可能在表单打开后被删除；将失效引用归一为未分类，
+        // 避免任务既不属于现有项目、也无法出现在 Inbox。
+        let validProjectID = projectID.flatMap { candidate in
+            projects.contains(where: { $0.id == candidate }) ? candidate : nil
+        }
 
         let nextOrder = (tasks(inRaw: columnID).map(\.sortOrder).max() ?? -1) + 1
         let task = BoardTask(
@@ -306,13 +315,14 @@ final class BoardStore: ObservableObject {
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
             columnID: columnID,
             priority: priority,
-            projectID: projectID,
+            projectID: validProjectID,
             dueDate: dueDate,
             sortOrder: nextOrder
         )
         tasks.append(task)
         selectedTaskID = task.id
         persist()
+        return task.id
     }
 
     func updateTask(_ updatedTask: BoardTask) {
@@ -321,9 +331,45 @@ final class BoardStore: ObservableObject {
         persistDebounced()
     }
 
+    /// 详情面板的显式保存入口。普通字段与跨列移动合并为一次任务数组发布，
+    /// 避免先写详情、再移动列造成两次持久化及短暂的中间状态。
+    func saveTask(_ updatedTask: BoardTask) {
+        guard let currentIndex = tasks.firstIndex(where: { $0.id == updatedTask.id }) else { return }
+
+        let currentTask = tasks[currentIndex]
+        var taskToSave = updatedTask
+        taskToSave.sortOrder = currentTask.sortOrder
+
+        if currentTask.columnID == taskToSave.columnID {
+            guard currentTask != taskToSave else { return }
+            tasks[currentIndex] = taskToSave
+        } else {
+            guard let movedTasks = tasksByMoving(
+                id: taskToSave.id,
+                to: taskToSave.columnID,
+                before: nil,
+                replacing: taskToSave
+            ) else { return }
+            tasks = movedTasks
+        }
+        persist()
+    }
+
     func moveTask(id: BoardTask.ID, to columnID: BoardColumn.ID, before destinationID: BoardTask.ID? = nil) {
+        guard let movedTasks = tasksByMoving(id: id, to: columnID, before: destinationID) else { return }
+        guard movedTasks != tasks else { return }
+        tasks = movedTasks
+        persist()
+    }
+
+    private func tasksByMoving(
+        id: BoardTask.ID,
+        to columnID: BoardColumn.ID,
+        before destinationID: BoardTask.ID?,
+        replacing replacement: BoardTask? = nil
+    ) -> [BoardTask]? {
         guard columns.contains(where: { $0.id == columnID }),
-              let taskIndex = tasks.firstIndex(where: { $0.id == id }) else { return }
+              let taskIndex = tasks.firstIndex(where: { $0.id == id }) else { return nil }
         let sourceColumn = tasks[taskIndex].columnID
 
         let groups = groupedTasks()
@@ -350,13 +396,12 @@ final class BoardStore: ObservableObject {
             }
         }
         // 拖放可同时影响两列；合并为一次数组更新，避免逐 ID 搜索及多次发布中间状态。
-        tasks = tasks.map { task in
-            var task = task
+        return tasks.map { existingTask in
+            var task = existingTask.id == id ? (replacement ?? existingTask) : existingTask
             if task.id == id { task.columnID = columnID }
             if let sortOrder = sortOrders[task.id] { task.sortOrder = sortOrder }
             return task
         }
-        persist()
     }
 
     func deleteTask(id: BoardTask.ID) {
@@ -591,10 +636,14 @@ final class BoardStore: ObservableObject {
             $0.sortOrder == $1.sortOrder ? $0.id.uuidString < $1.id.uuidString : $0.sortOrder < $1.sortOrder
         }
         let columnIDs = Set(columns.map(\.id))
+        let projectIDs = Set(snapshot.projects.map(\.id))
         let tasks = snapshot.tasks.map { task in
             var task = task
             if !columnIDs.contains(task.columnID), let fallback {
                 task.columnID = fallback.id
+            }
+            if let projectID = task.projectID, !projectIDs.contains(projectID) {
+                task.projectID = nil
             }
             return task
         }
@@ -701,7 +750,10 @@ extension BoardStore {
         // 文件存在但读取失败（权限/卷错误等）：原始字节拿不到、也无法备份，
         // 必须返回不绑定路径的安全内存 store，避免后续写入覆盖不可读的原文件。
         guard let data = try? Data(contentsOf: persistenceURL) else {
-            return BoardStore(persistenceURL: nil)
+            return BoardStore(
+                persistenceURL: nil,
+                initialPersistenceError: "无法读取数据文件；当前修改仅保存在本次运行中。"
+            )
         }
 
         do {
@@ -713,7 +765,8 @@ extension BoardStore {
                         projects: decoded.projects,
                         columns: decoded.columns,
                         tasks: decoded.tasks,
-                        persistenceURL: nil
+                        persistenceURL: nil,
+                        initialPersistenceError: "无法创建迁移备份；当前修改仅保存在本次运行中。"
                     )
                 }
             }
@@ -725,7 +778,10 @@ extension BoardStore {
             )
         } catch {
             if writeBackup(data, nextTo: persistenceURL, label: "recovery") == nil {
-                return BoardStore(persistenceURL: nil)
+                return BoardStore(
+                    persistenceURL: nil,
+                    initialPersistenceError: "无法备份损坏的数据文件；当前修改仅保存在本次运行中。"
+                )
             }
             return BoardStore(persistenceURL: persistenceURL)
         }

@@ -37,11 +37,13 @@ struct ColumnEditorSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     BoardlyFormSection("基本信息") {
-                        TextField("列名称", text: $draft.name, prompt: Text("例如：验证中"))
-                            .textFieldStyle(BoardlyTextFieldStyle())
-                            .focused($focusedField, equals: .name)
-                            .onSubmit(save)
-                            .accessibilityHint("必填")
+                        BoardlyFormRow(label: "名称") {
+                            TextField("列名称", text: $draft.name, prompt: Text("例如：验证中"))
+                                .textFieldStyle(BoardlyTextFieldStyle())
+                                .focused($focusedField, equals: .name)
+                                .onSubmit(save)
+                                .accessibilityHint("必填")
+                        }
                     }
 
                     BoardlyFormSection("外观") {
@@ -56,11 +58,15 @@ struct ColumnEditorSheet: View {
                         }
 
                         BoardlyFormRow(label: "颜色") {
-                            LazyHGrid(rows: [GridItem(.fixed(30))], spacing: 8) {
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 30), spacing: 8)],
+                                spacing: 8
+                            ) {
                                 ForEach(BoardlyTheme.projectColorOptions) { option in
                                     colorSwatch(option)
                                 }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
 
@@ -101,7 +107,7 @@ struct ColumnEditorSheet: View {
             }
             .padding(16)
         }
-        .frame(width: 420, height: 440)
+        .frame(width: 420, height: 520)
         .onAppear { focusedField = .name }
     }
 

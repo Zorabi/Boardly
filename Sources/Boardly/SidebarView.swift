@@ -20,7 +20,7 @@ struct SidebarView: View {
 
             Section("项目") {
                 ForEach(store.projects) { project in
-                    projectRow(project)
+                    projectRow(project, count: counts.projects[project.id, default: 0])
                 }
 
                 Button {
@@ -44,7 +44,7 @@ struct SidebarView: View {
                     Text("正在保存…")
                 } else if let persistenceError = store.persistenceError {
                     Image(systemName: "exclamationmark.triangle")
-                    Text("保存失败")
+                    Text("保存不可用")
                         .help(persistenceError)
                 } else {
                     Image(systemName: "checkmark.seal")
@@ -82,9 +82,8 @@ struct SidebarView: View {
         }
     }
 
-    private func projectRow(_ project: Project) -> some View {
-        let count = store.taskCount(in: project.id)
-        return HStack(spacing: 6) {
+    private func projectRow(_ project: Project, count: Int) -> some View {
+        HStack(spacing: 6) {
             Label {
                 Text(project.name)
             } icon: {
@@ -127,6 +126,7 @@ struct SidebarView: View {
     private struct SidebarCounts {
         var inbox = 0
         var today = 0
+        var projects: [Project.ID: Int] = [:]
     }
 
     private var sidebarCounts: SidebarCounts {
@@ -137,6 +137,8 @@ struct SidebarView: View {
         for task in store.tasks where !doneColumns.contains(task.columnID) {
             if task.projectID == nil {
                 counts.inbox += 1
+            } else if let projectID = task.projectID {
+                counts.projects[projectID, default: 0] += 1
             }
             if let dueDate = task.dueDate, calendar.isDate(dueDate, inSameDayAs: now) {
                 counts.today += 1
