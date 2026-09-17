@@ -13,15 +13,18 @@ struct BoardView: View {
     @State private var directlyDraggedTaskID: BoardTask.ID?
     @State private var directDragLocation: CGPoint?
 
-    private var visibleTaskCount: Int {
-        store.orderedColumns.reduce(0) { result, column in
-            result + store.tasks(in: column.id, matching: searchText).count
+    private var visibleTasksByColumn: [BoardColumn.ID: [BoardTask]] {
+        var grouped: [BoardColumn.ID: [BoardTask]] = [:]
+        for column in store.orderedColumns {
+            grouped[column.id] = store.tasks(in: column.id, matching: searchText)
         }
+        return grouped
     }
 
     var body: some View {
+        let tasksByColumn = visibleTasksByColumn
         Group {
-            if visibleTaskCount == 0, !searchText.isEmpty {
+            if tasksByColumn.values.allSatisfy(\.isEmpty), !searchText.isEmpty {
                 ContentUnavailableView.search(text: searchText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -31,7 +34,7 @@ struct BoardView: View {
                             ForEach(store.orderedColumns) { column in
                                 TaskColumnView(
                                     column: column,
-                                    searchText: searchText,
+                                    tasks: tasksByColumn[column.id] ?? [],
                                     onCreateTask: onCreateTask,
                                     onRename: { editingColumn = column },
                                     onDelete: { deletingColumn = column },
@@ -145,7 +148,7 @@ private struct TaskColumnView: View {
     @EnvironmentObject private var store: BoardStore
     @EnvironmentObject private var settings: BoardlySettings
     let column: BoardColumn
-    let searchText: String
+    let tasks: [BoardTask]
     let onCreateTask: (BoardColumn.ID) -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
@@ -153,10 +156,6 @@ private struct TaskColumnView: View {
     @Binding var directDragLocation: CGPoint?
     let onDirectDragEnded: (BoardTask.ID, CGPoint) -> Void
     @State private var isDropTarget = false
-
-    private var tasks: [BoardTask] {
-        store.tasks(in: column.id, matching: searchText)
-    }
 
     private var leftNeighbor: BoardColumn? {
         let ordered = store.orderedColumns

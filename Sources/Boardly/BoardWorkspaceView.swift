@@ -132,7 +132,7 @@ struct BoardWorkspaceView: View {
         if reduceMotion {
             isInspectorPresented = false
         } else {
-            withAnimation(.easeIn(duration: 0.15)) {
+            withAnimation(.easeIn(duration: 0.08)) {
                 isInspectorPresented = false
             }
         }
@@ -142,7 +142,7 @@ struct BoardWorkspaceView: View {
         if reduceMotion {
             isInspectorPresented = true
         } else {
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(.easeOut(duration: 0.12)) {
                 isInspectorPresented = true
             }
         }

@@ -404,6 +404,14 @@ private final class BoardlyScroller: NSScroller {
 /// legacy 滚动条），并把滑块着色为 Theme 的 accent 同源色。
 /// 看板横向、列内纵向与表单 ScrollView 共用这一个实现。
 private struct BoardlyScrollerThemer: NSViewRepresentable {
+    final class Coordinator {
+        var didTheme = false
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         // makeNSView 时视图尚未挂到 NSScrollView，下一个主循环再主题化。
@@ -412,9 +420,12 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        // updateNSView 会随 SwiftUI 重绘频繁调用；滚动条主题化是幂等的，
-        // 直接检查宿主即可，避免每次重绘都向主队列追加异步任务。
-        Self.theme(scrollView: Self.enclosingScrollViewOf(nsView))
+        // updateNSView 会随 SwiftUI 重绘频繁调用；每个宿主只需主题化一次，
+        // 避免滚动或输入时反复检查 NSScroller。
+        guard !context.coordinator.didTheme,
+              let scrollView = Self.enclosingScrollViewOf(nsView) else { return }
+        Self.theme(scrollView: scrollView)
+        context.coordinator.didTheme = true
     }
 
     private static func theme(scrollView: NSScrollView?) {
