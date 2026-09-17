@@ -131,6 +131,7 @@ struct TaskCardView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .focusEffectDisabled()
         .accessibilityLabel("移动任务菜单")
         .accessibilityHint("打开后可将任务移动到任意列，无需拖放。")
     }

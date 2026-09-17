@@ -273,6 +273,7 @@ private struct TaskColumnView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .focusEffectDisabled()
         .help("\(column.name)列操作")
         .accessibilityLabel("\(column.name)列操作")
         .accessibilityHint("重命名、左移、右移或删除这一列")
