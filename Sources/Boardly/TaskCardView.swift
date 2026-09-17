@@ -19,7 +19,7 @@ struct TaskCardView: View {
             headerRow
 
             Text(task.title)
-                .font(.body.weight(.medium))
+                .boardlyFont(.body, weight: .medium)
                 .foregroundStyle(isInDoneColumn ? Color.secondary : Color.primary)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
@@ -27,7 +27,7 @@ struct TaskCardView: View {
 
             if settings.showTaskNotes, !task.notes.isEmpty {
                 Text(task.notes)
-                    .font(.caption)
+                    .boardlyFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -124,7 +124,7 @@ struct TaskCardView: View {
             moveMenuItems
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .medium))
+                .boardlySystemFont(size: 12, weight: .medium)
                 .foregroundStyle(.secondary)
                 .frame(width: 24, height: 20)
                 .contentShape(Rectangle())
@@ -162,12 +162,12 @@ struct TaskCardView: View {
                     .fill(BoardlyTheme.projectColor(named: project.colorName))
                     .frame(width: 7, height: 7)
                 Text(project.name)
-                    .font(.caption.weight(.medium))
+                    .boardlyFont(.caption, weight: .medium)
                     .foregroundStyle(.secondary)
             }
         } else {
             Label("未分类", systemImage: "tray")
-                .font(.caption.weight(.medium))
+                .boardlyFont(.caption, weight: .medium)
                 .foregroundStyle(.secondary)
         }
     }
@@ -198,7 +198,7 @@ struct TaskCardView: View {
                     .accessibilityLabel("\(task.tags.count) 个标签")
             }
         }
-        .font(.caption)
+        .boardlyFont(.caption)
     }
 
     private var accessibilitySummary: String {
@@ -228,19 +228,19 @@ struct TaskCardDragPreview: View {
                         .fill(BoardlyTheme.projectColor(named: project.colorName))
                         .frame(width: 7, height: 7)
                     Text(project.name)
-                        .font(.caption.weight(.medium))
+                        .boardlyFont(.caption, weight: .medium)
                         .foregroundStyle(.secondary)
                 }
             }
 
             Text(task.title)
-                .font(.body.weight(.medium))
+                .boardlyFont(.body, weight: .medium)
                 .foregroundStyle(.primary)
                 .lineLimit(2)
 
             if settings.showTaskNotes, !task.notes.isEmpty {
                 Text(task.notes)
-                    .font(.caption)
+                    .boardlyFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }

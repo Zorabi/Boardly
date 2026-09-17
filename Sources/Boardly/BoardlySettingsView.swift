@@ -40,21 +40,21 @@ struct BoardlySettingsView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("自定义比例")
-                                    .font(.subheadline)
+                                    .boardlyFont(.subheadline)
                                     .foregroundStyle(.secondary)
                                 Spacer()
                                 Text("\(Int(settings.fontScale * 100))%")
-                                    .font(.caption.monospacedDigit())
+                                    .boardlyFont(.caption, monospacedDigits: true)
                                     .foregroundStyle(.secondary)
                             }
-                            Slider(value: $settings.fontScale, in: 0.85...1.35, step: 0.05)
+                            Slider(value: $settings.fontScale, in: 0.85...1.35, step: 0.01)
                                 .tint(BoardlyTheme.accent)
                                 .accessibilityLabel("字体大小比例")
                                 .accessibilityValue("\(Int(settings.fontScale * 100))%")
                         }
 
                         Text("会同步调整看板、任务详情和表单文字。")
-                            .font(.caption)
+                            .boardlyFont(.caption)
                             .foregroundStyle(.secondary)
                     }
 
@@ -100,7 +100,7 @@ struct BoardlySettingsView: View {
             }
 
             Label("看板设置", systemImage: "textformat.size")
-                .font(.headline)
+                .boardlyFont(.headline)
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark")

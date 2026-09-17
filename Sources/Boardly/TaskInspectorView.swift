@@ -34,7 +34,7 @@ struct TaskInspectorView: View {
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text("描述")
-                                .font(.caption)
+                                .boardlyFont(.caption)
                                 .foregroundStyle(.secondary)
                             BoardlyTextEditor(text: $task.notes, minHeight: 110, prompt: "补充背景或完成标准")
                         }
@@ -111,7 +111,7 @@ struct TaskInspectorView: View {
     private var header: some View {
         HStack {
             Label("任务详情", systemImage: "slider.horizontal.3")
-                .font(.headline)
+                .boardlyFont(.headline)
             Spacer()
             if let onOpenSettings {
                 Button(action: onOpenSettings) {
@@ -161,8 +161,8 @@ private struct FlowTags: View {
     var body: some View {
         HStack(spacing: 6) {
             ForEach(tags, id: \.self) { tag in
-                Label(tag, systemImage: "tag")
-                    .font(.caption)
+                    Label(tag, systemImage: "tag")
+                    .boardlyFont(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color.white.opacity(0.06), in: Capsule())

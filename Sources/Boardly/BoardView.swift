@@ -115,9 +115,9 @@ struct BoardView: View {
         } label: {
             VStack(spacing: 8) {
                 Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .medium))
+                    .boardlySystemFont(size: 18, weight: .medium)
                 Text("新增列")
-                    .font(.caption.weight(.medium))
+                    .boardlyFont(.caption, weight: .medium)
             }
             .foregroundStyle(.secondary)
             .frame(width: 120)
@@ -226,13 +226,13 @@ private struct TaskColumnView: View {
     private var columnHeader: some View {
         HStack(spacing: 8) {
             Image(systemName: column.symbol)
-                .font(.system(size: 12, weight: .semibold))
+                .boardlySystemFont(size: 12, weight: .semibold)
                 .foregroundStyle(BoardlyTheme.projectColor(named: column.colorName))
                 .accessibilityHidden(true)
             Text(column.name)
-                .font(.subheadline.weight(.semibold))
+                .boardlyFont(.subheadline, weight: .semibold)
             Text(tasks.count, format: .number)
-                .font(.caption.monospacedDigit())
+                .boardlyFont(.caption, monospacedDigits: true)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
@@ -262,7 +262,7 @@ private struct TaskColumnView: View {
             columnMenuItems
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .medium))
+                .boardlySystemFont(size: 12, weight: .medium)
                 .foregroundStyle(.secondary)
                 .frame(width: 24, height: 20)
                 .contentShape(Rectangle())
@@ -301,17 +301,17 @@ private struct TaskColumnView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Text("暂无任务")
-                .font(.caption.weight(.medium))
+                .boardlyFont(.caption, weight: .medium)
                 .foregroundStyle(.secondary)
             Text("拖放卡片到这里，或点按右上角 + 新建。")
-                .font(.caption)
+                .boardlyFont(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
             Button {
                 onCreateTask(column.id)
             } label: {
                 Label("新建任务", systemImage: "plus")
-                    .font(.caption.weight(.medium))
+                    .boardlyFont(.caption, weight: .medium)
             }
             .buttonStyle(BoardlySecondaryButtonStyle())
             .padding(.top, 2)

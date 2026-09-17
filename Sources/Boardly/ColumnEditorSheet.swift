@@ -69,7 +69,7 @@ struct ColumnEditorSheet: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("完成列")
                                 Text("该列任务视为已完成：不计入侧栏未完成数，看板中置灰显示。")
-                                    .font(.caption)
+                                    .boardlyFont(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -77,7 +77,7 @@ struct ColumnEditorSheet: View {
                         .disabled(isOnlyDoneColumn)
                         if isOnlyDoneColumn {
                             Text("这是最后一个完成列，至少需要保留一个；可先把其他列设为完成列。")
-                                .font(.caption)
+                                .boardlyFont(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
