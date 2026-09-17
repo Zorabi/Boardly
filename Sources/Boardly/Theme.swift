@@ -406,6 +406,8 @@ private final class BoardlyScroller: NSScroller {
 private struct BoardlyScrollerThemer: NSViewRepresentable {
     final class Coordinator {
         var didTheme = false
+        var isSchedulingAttempt = false
+        var attemptCount = 0
     }
 
     func makeCoordinator() -> Coordinator {
@@ -414,18 +416,46 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        // makeNSView 时视图尚未挂到 NSScrollView，下一个主循环再主题化。
-        DispatchQueue.main.async { Self.theme(scrollView: Self.enclosingScrollViewOf(view)) }
+        // Inspector 的 ScrollView 可能在 representable 创建后才挂入窗口，
+        // 因此在短时间内重试几次，确保不会错过宿主 NSScrollView。
+        scheduleTheme(for: view, coordinator: context.coordinator)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        // updateNSView 会随 SwiftUI 重绘频繁调用；每个宿主只需主题化一次，
-        // 避免滚动或输入时反复检查 NSScroller。
-        guard !context.coordinator.didTheme,
-              let scrollView = Self.enclosingScrollViewOf(nsView) else { return }
-        Self.theme(scrollView: scrollView)
-        context.coordinator.didTheme = true
+        // updateNSView 会随 SwiftUI 重绘调用；未找到宿主时复用同一组有限重试，
+        // 找到后不再参与滚动或输入期间的更新。
+        scheduleTheme(for: nsView, coordinator: context.coordinator)
+    }
+
+    private func scheduleTheme(for view: NSView, coordinator: Coordinator) {
+        guard !coordinator.didTheme, !coordinator.isSchedulingAttempt else { return }
+
+        coordinator.isSchedulingAttempt = true
+        let attempt = coordinator.attemptCount + 1
+        coordinator.attemptCount = attempt
+
+        // 0.02 秒足以跨过 SwiftUI/AppKit 的挂载边界；最多等待约 0.25 秒，
+        // 避免无宿主时产生永久定时任务。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak view, weak coordinator] in
+            guard let view, let coordinator else { return }
+            coordinator.isSchedulingAttempt = false
+            guard !coordinator.didTheme else { return }
+
+            if let scrollView = Self.enclosingScrollViewOf(view) {
+                Self.theme(scrollView: scrollView)
+                coordinator.didTheme = true
+
+                // SwiftUI 可能在第一次布局后替换原生 scroller；再校验一次，
+                // 仍只发生在挂载阶段，不影响正常滚动性能。
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak view] in
+                    guard let view else { return }
+                    Self.theme(scrollView: Self.enclosingScrollViewOf(view))
+                }
+            } else if attempt < 12 {
+                self.scheduleTheme(for: view, coordinator: coordinator)
+            }
+        }
     }
 
     private static func theme(scrollView: NSScrollView?) {
