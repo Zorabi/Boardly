@@ -61,7 +61,9 @@ struct NewTaskSheet: View {
                         BoardlyFormRow(label: "优先级") {
                             Picker("优先级", selection: $priority) {
                                 ForEach(TaskPriority.allCases) { item in
-                                    Label(item.title, systemImage: item.systemImage).tag(item)
+                                    Label(item.title, systemImage: item.systemImage)
+                                        .foregroundStyle(BoardlyTheme.priorityColor(for: item))
+                                        .tag(item)
                                 }
                             }
                             .pickerStyle(.segmented)
