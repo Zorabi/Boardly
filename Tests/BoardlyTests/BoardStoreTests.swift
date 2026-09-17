@@ -205,6 +205,7 @@ final class BoardStoreTests: XCTestCase {
         let seededStore = BoardStore.load(persistenceURL: missingURL)
         XCTAssertFalse(seededStore.tasks.isEmpty, "首启应加载示例种子")
         seededStore.addTask(title: "首启任务", notes: "", columnID: DefaultColumns.todoID, priority: .medium, projectID: nil, dueDate: nil)
+        seededStore.flushPersistence()
         XCTAssertTrue(FileManager.default.fileExists(atPath: missingURL.path), "绑定路径的 store 修改后应落盘")
 
         // 路径二：文件存在但不可读（chmod 000）→ 安全内存 store，修改不落盘。
@@ -613,6 +614,60 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(store.taskCount(in: project.id), 1, "完成语义列（含自定义）的任务不计入未完成计数")
     }
 
+    func testTaskQuerySearchesAllFieldsAndInvalidatesAfterUpdate() {
+        let task = BoardTask(
+            title: "标题",
+            notes: "背景说明",
+            columnID: DefaultColumns.todoID,
+            tags: ["标签"]
+        )
+        let store = BoardStore(tasks: [task])
+
+        XCTAssertEqual(store.tasks(in: DefaultColumns.todoID, matching: "背景").map(\.id), [task.id])
+        XCTAssertEqual(store.tasks(in: DefaultColumns.todoID, matching: "标签").map(\.id), [task.id])
+
+        var moved = task
+        moved.title = "更新后的标题"
+        moved.columnID = DefaultColumns.backlogID
+        store.updateTask(moved)
+
+        XCTAssertTrue(store.tasks(in: DefaultColumns.todoID).isEmpty)
+        XCTAssertEqual(store.tasks(in: DefaultColumns.backlogID).map(\.title), ["更新后的标题"])
+    }
+
+    // MARK: - 异步持久化
+
+    func testFlushPersistenceWritesLatestDebouncedSnapshot() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("board.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let task = BoardTask(title: "初始标题", columnID: DefaultColumns.todoID)
+        let store = BoardStore(tasks: [task], persistenceURL: fileURL)
+        var updated = task
+        updated.title = "终止前的最新标题"
+        store.updateTask(updated) // 高频编辑走延迟后台持久化。
+        store.flushPersistence()
+
+        let snapshot = try BoardStore.decodeSnapshot(Data(contentsOf: fileURL))
+        XCTAssertEqual(snapshot.tasks.first?.title, "终止前的最新标题")
+        XCTAssertNil(store.persistenceError)
+    }
+
+    func testFlushPersistencePublishesWriteFailure() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let nonDirectory = directory.appendingPathComponent("not-a-directory")
+        try Data("file".utf8).write(to: nonDirectory)
+        let store = BoardStore(persistenceURL: nonDirectory.appendingPathComponent("board.json"))
+        store.addTask(title: "不能写入", notes: "", columnID: DefaultColumns.todoID, priority: .medium, projectID: nil, dueDate: nil)
+        store.flushPersistence()
+
+        XCTAssertNotNil(store.persistenceError, "后台/flush 写盘失败必须保留可观察状态")
+    }
+
     // MARK: - 拖放载荷与手势映射
 
     func testTaskDragTypeIsDeclaredWithoutForceUnwrap() {
@@ -673,7 +728,7 @@ final class BoardStoreTests: XCTestCase {
         let store = BoardStore(columns: DefaultColumns.makeDefaults())
 
         // 最前（首列之前）。
-        let frontID = try XCTUnwrap(
+        _ = try XCTUnwrap(
             store.addColumn(name: "最前", symbol: "bolt", colorName: "teal", before: DefaultColumns.backlogID)
         )
         XCTAssertEqual(
@@ -746,7 +801,7 @@ private func orderedColumnNames(of columns: [BoardColumn]) -> [String] {
 
 private extension Array where Element == BoardColumn {
     func minByOrder() -> BoardColumn? {
-        min { lhs, rhs in
+        self.min { lhs, rhs in
             lhs.sortOrder == rhs.sortOrder ? lhs.id.uuidString < rhs.id.uuidString : lhs.sortOrder < rhs.sortOrder
         }
     }

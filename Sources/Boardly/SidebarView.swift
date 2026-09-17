@@ -7,11 +7,12 @@ struct SidebarView: View {
     @State private var projectPendingDeletion: Project?
 
     var body: some View {
+        let counts = sidebarCounts
         List(selection: $store.selectedScope) {
             Section("任务") {
-                SidebarRow(title: "未分类", systemImage: "tray", count: inboxCount)
+                SidebarRow(title: "未分类", systemImage: "tray", count: counts.inbox)
                     .tag(SidebarScope.inbox)
-                SidebarRow(title: "今天", systemImage: "sun.max", count: todayCount)
+                SidebarRow(title: "今天", systemImage: "sun.max", count: counts.today)
                     .tag(SidebarScope.today)
                 SidebarRow(title: "所有任务", systemImage: "rectangle.stack", count: store.tasks.count)
                     .tag(SidebarScope.all)
@@ -38,11 +39,20 @@ struct SidebarView: View {
         .navigationTitle("Boardly")
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 8) {
-                Image(systemName: "checkmark.seal")
-                Text("所有更改已保存")
+                if store.isPersistencePending {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                    Text("正在保存…")
+                } else if let persistenceError = store.persistenceError {
+                    Image(systemName: "exclamationmark.triangle")
+                    Text("保存失败")
+                        .help(persistenceError)
+                } else {
+                    Image(systemName: "checkmark.seal")
+                    Text("所有更改已保存")
+                }
             }
             .boardlyFont(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(store.persistenceError == nil ? Color.secondary : BoardlyTheme.danger)
             .padding(.vertical, 8)
         }
         .sheet(isPresented: $isPresentingNewProject) {
@@ -73,7 +83,8 @@ struct SidebarView: View {
     }
 
     private func projectRow(_ project: Project) -> some View {
-        HStack(spacing: 6) {
+        let count = store.taskCount(in: project.id)
+        return HStack(spacing: 6) {
             Label {
                 Text(project.name)
             } icon: {
@@ -81,10 +92,10 @@ struct SidebarView: View {
                     .foregroundStyle(BoardlyTheme.projectColor(named: project.colorName))
             }
             Spacer(minLength: 4)
-            Text(store.taskCount(in: project.id), format: .number)
+            Text(count, format: .number)
                 .boardlyFont(.caption, monospacedDigits: true)
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("\(store.taskCount(in: project.id)) 个任务")
+                .accessibilityLabel("\(count) 个任务")
         }
         .tag(SidebarScope.project(project.id))
         .contextMenu {
@@ -113,17 +124,25 @@ struct SidebarView: View {
         )
     }
 
-    private var inboxCount: Int {
-        let doneColumns = store.doneColumnIDs
-        return store.tasks.filter { $0.projectID == nil && !doneColumns.contains($0.columnID) }.count
+    private struct SidebarCounts {
+        var inbox = 0
+        var today = 0
     }
 
-    private var todayCount: Int {
+    private var sidebarCounts: SidebarCounts {
         let doneColumns = store.doneColumnIDs
-        return store.tasks.filter { task in
-            guard let date = task.dueDate else { return false }
-            return Calendar.current.isDateInToday(date) && !doneColumns.contains(task.columnID)
-        }.count
+        let calendar = Calendar.current
+        let now = Date.now
+        var counts = SidebarCounts()
+        for task in store.tasks where !doneColumns.contains(task.columnID) {
+            if task.projectID == nil {
+                counts.inbox += 1
+            }
+            if let dueDate = task.dueDate, calendar.isDate(dueDate, inSameDayAs: now) {
+                counts.today += 1
+            }
+        }
+        return counts
     }
 }
 
