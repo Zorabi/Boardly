@@ -44,32 +44,15 @@ struct BoardWorkspaceView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
-            VStack(spacing: 0) {
-                HStack {
-                    Spacer()
-                    Button {
-                        toggleSettings()
-                    } label: {
-                        Label(
-                            settingsIsOpen ? "关闭设置" : "设置",
-                            systemImage: settingsIsOpen ? "gearshape.fill" : "gearshape"
-                        )
-                    }
-                    .buttonStyle(BoardlySecondaryButtonStyle())
-                    .keyboardShortcut("i", modifiers: [.command, .option])
-                    .help(settingsIsOpen ? "关闭看板设置 (⌥⌘I)" : "打开看板设置 (⌥⌘I)")
-                    .accessibilityLabel(settingsIsOpen ? "关闭看板设置" : "打开看板设置")
-                    .accessibilityValue(settingsIsOpen ? "已打开" : "已关闭")
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(BoardlyTheme.canvas)
-
-                BoardView(searchText: searchText) { columnID in
-                    newTaskContext = NewTaskContext(columnID: columnID)
-                }
+            BoardView(searchText: searchText) { columnID in
+                newTaskContext = NewTaskContext(columnID: columnID)
             }
             .navigationTitle(store.selectedScopeTitle)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    settingsButton
+                }
+            }
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "搜索任务")
         .toolbar {
@@ -100,6 +83,34 @@ struct BoardWorkspaceView: View {
 
     private var settingsIsOpen: Bool {
         isSettingsPresented && isInspectorPresented
+    }
+
+    /// 全局设置入口固定在标题栏右侧，避免在看板内容区占用一整行。
+    /// 保留文字、图标和状态色，确保它既容易发现，也能明确表达开关状态。
+    private var settingsButton: some View {
+        Button(action: toggleSettings) {
+            Label(
+                settingsIsOpen ? "关闭设置" : "设置",
+                systemImage: settingsIsOpen ? "gearshape.fill" : "gearshape"
+            )
+            .boardlyFont(.subheadline, weight: .medium)
+            .foregroundStyle(settingsIsOpen ? BoardlyTheme.accent : Color.primary)
+            .padding(.horizontal, 10)
+            .frame(minWidth: 44, minHeight: 30)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(settingsIsOpen ? BoardlyTheme.accent.opacity(0.16) : Color.white.opacity(0.06))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(settingsIsOpen ? BoardlyTheme.accent.opacity(0.45) : BoardlyTheme.border)
+            }
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("i", modifiers: [.command, .option])
+        .help(settingsIsOpen ? "关闭看板设置 (⌥⌘I)" : "打开看板设置 (⌥⌘I)")
+        .accessibilityLabel(settingsIsOpen ? "关闭看板设置" : "打开看板设置")
+        .accessibilityValue(settingsIsOpen ? "已打开" : "已关闭")
     }
 
     private func toggleSettings() {
@@ -148,7 +159,6 @@ struct BoardWorkspaceView: View {
                     }
                 ),
                 onClose: { closeInspector() },
-                onOpenSettings: { isSettingsPresented = true },
                 onDelete: {
                     store.deleteTask(id: selectedTask.id)
                     closeInspector()
