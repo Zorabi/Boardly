@@ -6,19 +6,21 @@ import SwiftUI
 struct BoardlyWindowChrome: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        configureWindow(of: view)
+        // makeNSView 时视图尚未挂到窗口，等待下一个主循环再配置一次。
+        DispatchQueue.main.async { Self.configureWindow(of: view) }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        configureWindow(of: nsView)
+        Self.configureWindow(of: nsView)
     }
 
-    private func configureWindow(of view: NSView) {
-        // makeNSView 时视图尚未挂到窗口，等待下一个主循环再配置。
-        DispatchQueue.main.async {
-            guard let window = view.window else { return }
+    private static func configureWindow(of view: NSView) {
+        guard let window = view.window else { return }
+        if !window.titlebarAppearsTransparent {
             window.titlebarAppearsTransparent = true
+        }
+        if window.backgroundColor?.isEqual(BoardlyTheme.toolbarNSColor) != true {
             window.backgroundColor = BoardlyTheme.toolbarNSColor
         }
     }
@@ -48,14 +50,14 @@ struct BoardWorkspaceView: View {
                 newTaskContext = NewTaskContext(columnID: columnID)
             }
             .navigationTitle(store.selectedScopeTitle)
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    settingsButton
-                }
-            }
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "搜索任务")
         .toolbar {
+            // macOS 会把 primaryAction 放在系统“收回侧边栏”按钮左侧，
+            // 让全局设置成为标题栏最左侧的稳定入口。
+            ToolbarItem(placement: .primaryAction) {
+                settingsButton
+            }
             ToolbarItem(placement: .navigation) {
                 Button {
                     newTaskContext = NewTaskContext(columnID: nil)
@@ -75,7 +77,14 @@ struct BoardWorkspaceView: View {
                 .environmentObject(store)
         }
         .onChange(of: store.selectedTaskID) { _, selectedTaskID in
-            guard selectedTaskID != nil else { return }
+            guard selectedTaskID != nil else {
+                // 列删除会迁移并清除原列的选中任务；详情检查器也应随之关闭，
+                // 避免目标列（尤其是 Backlog）留下误导性的选中高亮。
+                if !isSettingsPresented, isInspectorPresented {
+                    closeInspector()
+                }
+                return
+            }
             isSettingsPresented = false
             presentInspector()
         }
@@ -101,12 +110,8 @@ struct BoardWorkspaceView: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(settingsIsOpen ? BoardlyTheme.accent.opacity(0.16) : Color.white.opacity(0.06))
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(settingsIsOpen ? BoardlyTheme.accent.opacity(0.45) : BoardlyTheme.border)
-            }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(BoardlyPlainButtonStyle())
         .keyboardShortcut("i", modifiers: [.command, .option])
         .help(settingsIsOpen ? "关闭看板设置 (⌥⌘I)" : "打开看板设置 (⌥⌘I)")
         .accessibilityLabel(settingsIsOpen ? "关闭看板设置" : "打开看板设置")

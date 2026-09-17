@@ -176,6 +176,7 @@ struct BoardlyPrimaryButtonStyle: ButtonStyle {
                     .fill(isEnabled ? BoardlyTheme.accent : BoardlyTheme.accent.opacity(0.35))
             )
             .opacity(configuration.isPressed ? 0.82 : 1)
+            .focusEffectDisabled()
     }
 }
 
@@ -197,6 +198,7 @@ struct BoardlySecondaryButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(isEnabled ? BoardlyTheme.border : BoardlyTheme.border.opacity(0.5))
             }
+            .focusEffectDisabled()
     }
 }
 
@@ -215,6 +217,7 @@ struct BoardlyIconButtonStyle: ButtonStyle {
                     .fill(configuration.isPressed ? Color.white.opacity(0.12) : Color.white.opacity(0.06))
             )
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .focusEffectDisabled()
     }
 }
 
@@ -236,6 +239,17 @@ struct BoardlyDestructiveButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(BoardlyTheme.danger.opacity(isEnabled ? 0.35 : 0.15))
             }
+            .focusEffectDisabled()
+    }
+}
+
+/// 无系统焦点外框的轻量按钮：保留键盘焦点语义，但避免点击后留下高亮边框。
+/// 适用于颜色色板、侧栏次要入口和看板空状态等自定义命中区域。
+struct BoardlyPlainButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.78 : 1)
+            .focusEffectDisabled()
     }
 }
 
@@ -398,14 +412,18 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async { Self.theme(scrollView: Self.enclosingScrollViewOf(nsView)) }
+        // updateNSView 会随 SwiftUI 重绘频繁调用；滚动条主题化是幂等的，
+        // 直接检查宿主即可，避免每次重绘都向主队列追加异步任务。
+        Self.theme(scrollView: Self.enclosingScrollViewOf(nsView))
     }
 
     private static func theme(scrollView: NSScrollView?) {
         guard let scrollView else { return }
         // overlay：无系统亮色轨道槽、悬浮不占内容空间；自定义 NSScroller
         // 绘制固定的 Boardly 深色轨道和紫色滑块，避免系统外观覆盖主题。
-        scrollView.scrollerStyle = .overlay
+        if scrollView.scrollerStyle != .overlay {
+            scrollView.scrollerStyle = .overlay
+        }
         let darkAppearance = NSAppearance(named: .vibrantDark)
 
         if !(scrollView.verticalScroller is BoardlyScroller) {

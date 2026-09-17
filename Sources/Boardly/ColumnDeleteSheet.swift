@@ -131,7 +131,7 @@ struct ColumnDeleteSheet: View {
             }
             .contentShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusField, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(BoardlyPlainButtonStyle())
         .accessibilityLabel("迁移到\(target.name)")
         .accessibilityAddTraits(migrationTargetID == target.id ? .isSelected : [])
     }

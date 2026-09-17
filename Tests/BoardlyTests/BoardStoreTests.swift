@@ -482,9 +482,11 @@ final class BoardStoreTests: XCTestCase {
         let second = BoardTask(title: "B", columnID: source.id, sortOrder: 1)
         let existing = BoardTask(title: "已有", columnID: target.id, sortOrder: 7)
         let store = BoardStore(columns: DefaultColumns.makeDefaults() + [target, source], tasks: [first, second, existing])
+        store.selectedTaskID = first.id
 
         XCTAssertTrue(store.deleteColumn(id: source.id, migratingTasksTo: target.id))
         XCTAssertNil(store.column(withID: source.id))
+        XCTAssertNil(store.selectedTaskID, "被删列中的任务迁移后不得继续高亮目标列")
         // 迁移任务追加到目标列尾部且保持相对顺序。
         XCTAssertEqual(store.tasks(in: target.id).map(\.title), ["已有", "A", "B"])
     }

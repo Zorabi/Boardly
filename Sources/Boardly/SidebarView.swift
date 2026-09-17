@@ -28,7 +28,7 @@ struct SidebarView: View {
                     Label("新建项目", systemImage: "plus")
                         .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(BoardlyPlainButtonStyle())
                 .accessibilityHint("打开新建项目表单")
             }
         }
