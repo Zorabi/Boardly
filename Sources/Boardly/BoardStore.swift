@@ -5,16 +5,37 @@ import Foundation
 final class BoardStore: ObservableObject {
     @Published var projects: [Project]
     @Published var columns: [BoardColumn]
-    @Published var tasks: [BoardTask]
+    @Published var tasks: [BoardTask] {
+        didSet { invalidateTaskCaches() }
+    }
     @Published var selectedScope: SidebarScope = .all
     @Published var selectedTaskID: BoardTask.ID?
+    /// 最近一次持久化是否仍在队列中，供 UI 区分“已提交”与“已落盘”。
+    @Published private(set) var isPersistencePending = false
+    /// 最近一次最新快照的落盘错误。保留错误而不是在后台静默丢弃，供 UI 或诊断日志观察。
+    @Published private(set) var persistenceError: String?
     private let persistenceURL: URL?
-    /// 文本编辑会连续触发 updateTask；把频繁落盘放到后台并短暂合并，避免主线程卡顿。
+    /// 所有编码与写盘都在同一串行队列完成，因此后提交的快照绝不会被更早的快照覆盖。
     private let persistenceQueue = DispatchQueue(
         label: "dev.boardly.persistence",
         qos: .utility
     )
-    private var pendingPersistence: DispatchWorkItem?
+    private var pendingPersistenceTask: Task<Void, Never>?
+    private var persistenceSequence = 0
+    private var taskGroups: [BoardColumn.ID: [BoardTask]]?
+    private var taskQueryCache: CachedTaskQuery?
+
+    private struct TaskQueryKey: Hashable {
+        let scope: SidebarScope
+        let cleanedQuery: String
+        /// 只有“今天”范围依赖日期；同一天内复用缓存，即使每次调用传入新的 Date.now。
+        let day: Date?
+    }
+
+    private struct CachedTaskQuery {
+        let key: TaskQueryKey
+        let groups: [BoardColumn.ID: [BoardTask]]
+    }
 
     init(
         projects: [Project] = [],
@@ -160,15 +181,20 @@ final class BoardStore: ObservableObject {
             return false
         }
 
-        let removedTasks = tasks(inRaw: id).sorted { $0.sortOrder < $1.sortOrder }
+        let groupedTasks = groupedTasks()
+        let removedTasks = groupedTasks[id] ?? []
         let removedTaskIDs = Set(removedTasks.map(\.id))
-        let nextOrder = (tasks(inRaw: targetID).map(\.sortOrder).max() ?? -1) + 1
-        for (offset, var task) in removedTasks.enumerated() {
-            task.columnID = targetID
-            task.sortOrder = nextOrder + offset
-            if let index = tasks.firstIndex(where: { $0.id == task.id }) {
-                tasks[index] = task
-            }
+        let nextOrder = (groupedTasks[targetID]?.map(\.sortOrder).max() ?? -1) + 1
+        let migratedOrders = Dictionary(
+            uniqueKeysWithValues: removedTasks.enumerated().map { ($0.element.id, nextOrder + $0.offset) }
+        )
+        // 一次映射并发布，避免迁移每个任务都触发一次 @Published 更新和 ID 反复查找。
+        tasks = tasks.map { task in
+            guard let sortOrder = migratedOrders[task.id] else { return task }
+            var migrated = task
+            migrated.columnID = targetID
+            migrated.sortOrder = sortOrder
+            return migrated
         }
         // 被删列中的任务会迁移到目标列，但不应继续保持“选中”状态，
         // 否则用户会误以为目标列（常见是 Backlog）被高亮选中。
@@ -196,16 +222,12 @@ final class BoardStore: ObservableObject {
     // MARK: - 任务查询
 
     func tasks(in columnID: BoardColumn.ID, matching query: String = "", now: Date = .now) -> [BoardTask] {
-        tasks
-            .filter { $0.columnID == columnID }
-            .filter { taskMatchesScope($0, now: now) }
-            .filter { taskMatchesSearch($0, query: query) }
-            .sorted(by: taskSort)
+        filteredTaskGroups(matching: query, now: now)[columnID] ?? []
     }
 
     /// 不经过范围/搜索过滤的原始列任务（列删除迁移与计数用）。
     private func tasks(inRaw columnID: BoardColumn.ID) -> [BoardTask] {
-        tasks.filter { $0.columnID == columnID }
+        groupedTasks()[columnID] ?? []
     }
 
     func task(withID id: BoardTask.ID?) -> BoardTask? {
@@ -253,8 +275,11 @@ final class BoardStore: ObservableObject {
 
     func deleteProject(id: Project.ID) {
         projects.removeAll { $0.id == id }
-        for index in tasks.indices where tasks[index].projectID == id {
-            tasks[index].projectID = nil
+        tasks = tasks.map { task in
+            guard task.projectID == id else { return task }
+            var task = task
+            task.projectID = nil
+            return task
         }
         if selectedScope == .project(id) {
             selectedScope = .all
@@ -297,12 +322,13 @@ final class BoardStore: ObservableObject {
     }
 
     func moveTask(id: BoardTask.ID, to columnID: BoardColumn.ID, before destinationID: BoardTask.ID? = nil) {
-        guard let taskIndex = tasks.firstIndex(where: { $0.id == id }) else { return }
+        guard columns.contains(where: { $0.id == columnID }),
+              let taskIndex = tasks.firstIndex(where: { $0.id == id }) else { return }
         let sourceColumn = tasks[taskIndex].columnID
 
-        var destinationIDs = tasks
-            .filter { $0.columnID == columnID && $0.id != id }
-            .sorted(by: taskSort)
+        let groups = groupedTasks()
+        var destinationIDs = (groups[columnID] ?? [])
+            .filter { $0.id != id }
             .map(\.id)
 
         if let destinationID,
@@ -312,10 +338,23 @@ final class BoardStore: ObservableObject {
             destinationIDs.append(id)
         }
 
-        tasks[taskIndex].columnID = columnID
-        applySortOrder(to: destinationIDs)
+        var sortOrders = Dictionary(
+            uniqueKeysWithValues: destinationIDs.enumerated().map { ($0.element, $0.offset) }
+        )
         if sourceColumn != columnID {
-            normalizeSortOrder(inRaw: sourceColumn)
+            let sourceIDs = (groups[sourceColumn] ?? [])
+                .filter { $0.id != id }
+                .map(\.id)
+            for (sortOrder, taskID) in sourceIDs.enumerated() {
+                sortOrders[taskID] = sortOrder
+            }
+        }
+        // 拖放可同时影响两列；合并为一次数组更新，避免逐 ID 搜索及多次发布中间状态。
+        tasks = tasks.map { task in
+            var task = task
+            if task.id == id { task.columnID = columnID }
+            if let sortOrder = sortOrders[task.id] { task.sortOrder = sortOrder }
+            return task
         }
         persist()
     }
@@ -328,13 +367,13 @@ final class BoardStore: ObservableObject {
 
     // MARK: - 过滤与排序
 
-    private func taskMatchesScope(_ task: BoardTask, now: Date) -> Bool {
+    private func taskMatchesScope(_ task: BoardTask, now: Date, calendar: Calendar) -> Bool {
         switch selectedScope {
         case .inbox:
             return task.projectID == nil
         case .today:
             guard let dueDate = task.dueDate else { return false }
-            return Calendar.current.isDate(dueDate, inSameDayAs: now)
+            return calendar.isDate(dueDate, inSameDayAs: now)
         case .all:
             return true
         case let .project(projectID):
@@ -342,11 +381,11 @@ final class BoardStore: ObservableObject {
         }
     }
 
-    private func taskMatchesSearch(_ task: BoardTask, query: String) -> Bool {
-        let cleanedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func taskMatchesSearch(_ task: BoardTask, cleanedQuery: String) -> Bool {
         guard !cleanedQuery.isEmpty else { return true }
-        let searchableText = ([task.title, task.notes] + task.tags).joined(separator: " ")
-        return searchableText.localizedStandardContains(cleanedQuery)
+        return task.title.localizedStandardContains(cleanedQuery)
+            || task.notes.localizedStandardContains(cleanedQuery)
+            || task.tags.contains { $0.localizedStandardContains(cleanedQuery) }
     }
 
     private func taskSort(_ lhs: BoardTask, _ rhs: BoardTask) -> Bool {
@@ -355,9 +394,18 @@ final class BoardStore: ObservableObject {
     }
 
     private func applySortOrder(to taskIDs: [BoardTask.ID]) {
-        for (sortOrder, taskID) in taskIDs.enumerated() {
-            guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { continue }
-            tasks[index].sortOrder = sortOrder
+        guard !taskIDs.isEmpty else { return }
+        let sortOrders = Dictionary(uniqueKeysWithValues: taskIDs.enumerated().map { ($0.element, $0.offset) })
+        var updatedTasks = tasks
+        var didChange = false
+        for index in updatedTasks.indices {
+            guard let sortOrder = sortOrders[updatedTasks[index].id],
+                  updatedTasks[index].sortOrder != sortOrder else { continue }
+            updatedTasks[index].sortOrder = sortOrder
+            didChange = true
+        }
+        if didChange {
+            tasks = updatedTasks
         }
     }
 
@@ -366,43 +414,138 @@ final class BoardStore: ObservableObject {
         applySortOrder(to: orderedIDs)
     }
 
+    private func invalidateTaskCaches() {
+        taskGroups = nil
+        taskQueryCache = nil
+    }
+
+    private func groupedTasks() -> [BoardColumn.ID: [BoardTask]] {
+        if let taskGroups { return taskGroups }
+        var grouped: [BoardColumn.ID: [BoardTask]] = [:]
+        for task in tasks {
+            grouped[task.columnID, default: []].append(task)
+        }
+        for columnID in grouped.keys {
+            grouped[columnID]?.sort(by: taskSort)
+        }
+        taskGroups = grouped
+        return grouped
+    }
+
+    private func filteredTaskGroups(matching query: String, now: Date) -> [BoardColumn.ID: [BoardTask]] {
+        let cleanedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let calendar = Calendar.current
+        let day = selectedScope == .today ? calendar.startOfDay(for: now) : nil
+        let key = TaskQueryKey(scope: selectedScope, cleanedQuery: cleanedQuery, day: day)
+        if let cached = taskQueryCache, cached.key == key {
+            return cached.groups
+        }
+
+        if selectedScope == .all, cleanedQuery.isEmpty {
+            let groups = groupedTasks()
+            taskQueryCache = CachedTaskQuery(key: key, groups: groups)
+            return groups
+        }
+
+        var filtered: [BoardColumn.ID: [BoardTask]] = [:]
+        for (columnID, columnTasks) in groupedTasks() {
+            let matches = columnTasks.filter {
+                taskMatchesScope($0, now: now, calendar: calendar)
+                    && taskMatchesSearch($0, cleanedQuery: cleanedQuery)
+            }
+            if !matches.isEmpty { filtered[columnID] = matches }
+        }
+        // 看板同一时间只使用一个查询结果；单项缓存避免搜索历史无限增长。
+        taskQueryCache = CachedTaskQuery(key: key, groups: filtered)
+        return filtered
+    }
+
     // MARK: - 持久化
 
     private func persist() {
-        guard let persistenceURL else { return }
-        pendingPersistence?.cancel()
-        do {
-            let data = try encodedSnapshot()
-            // 与后台合并写入共用同一串行队列，避免旧快照在新快照之后完成写入。
-            try persistenceQueue.sync {
-                try Self.writeSnapshot(data, to: persistenceURL)
-            }
-        } catch {
-            assertionFailure("Unable to persist Boardly data: \(error)")
-        }
+        schedulePersistence(after: nil)
     }
 
-    /// 只用于高频字段编辑：编码在主线程完成，实际原子写入在 utility 队列执行，
-    /// 120ms 内的连续输入合并为一次写盘，避免每个字符都阻塞界面。
+    /// 只用于高频字段编辑：在主 actor 合并 120ms 内的输入；编码和写盘始终在 utility 队列。
     private func persistDebounced() {
+        schedulePersistence(after: 0.12)
+    }
+
+    private func schedulePersistence(after delay: TimeInterval?) {
         guard let persistenceURL else { return }
-        pendingPersistence?.cancel()
-        do {
-            let data = try encodedSnapshot()
-            let work = DispatchWorkItem { [data, persistenceURL] in
-                try? Self.writeSnapshot(data, to: persistenceURL)
+        pendingPersistenceTask?.cancel()
+        persistenceSequence &+= 1
+        let sequence = persistenceSequence
+        if !isPersistencePending { isPersistencePending = true }
+        if persistenceError != nil { persistenceError = nil }
+        if let delay {
+            let nanoseconds = UInt64(delay * 1_000_000_000)
+            // 延迟任务只负责等待；最新快照在等待结束后才截取，避免连续编辑触发
+            // 大数组的 Copy-on-Write 复制。
+            pendingPersistenceTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: nanoseconds)
+                } catch {
+                    return
+                }
+                guard let self,
+                      !Task.isCancelled,
+                      self.persistenceSequence == sequence else { return }
+                self.pendingPersistenceTask = nil
+                self.enqueuePersistence(sequence: sequence, to: persistenceURL)
             }
-            pendingPersistence = work
-            persistenceQueue.asyncAfter(deadline: .now() + 0.12, execute: work)
-        } catch {
-            assertionFailure("Unable to encode Boardly data: \(error)")
+        } else {
+            enqueuePersistence(sequence: sequence, to: persistenceURL)
         }
     }
 
-    private func encodedSnapshot() throws -> Data {
-        try JSONEncoder().encode(
-            StoreSnapshot(projects: projects, columns: columns, tasks: tasks)
-        )
+    private func enqueuePersistence(sequence: Int, to url: URL) {
+        let snapshot = StoreSnapshot(projects: projects, columns: columns, tasks: tasks)
+        let store = self
+        persistenceQueue.async { [snapshot, url, sequence, weak store] in
+            do {
+                try Self.persist(snapshot, to: url)
+                Task { @MainActor [weak store] in
+                    store?.recordPersistenceResult(sequence: sequence, message: nil)
+                }
+            } catch {
+                let message = error.localizedDescription
+                Task { @MainActor [weak store] in
+                    store?.recordPersistenceResult(sequence: sequence, message: message)
+                }
+            }
+        }
+    }
+
+    /// 退出路径使用：取消尚未提交的延迟写入，并同步排空队列后落盘当前快照。
+    func flushPersistence() {
+        guard let persistenceURL else { return }
+        pendingPersistenceTask?.cancel()
+        pendingPersistenceTask = nil
+        persistenceSequence &+= 1
+        let sequence = persistenceSequence
+        if !isPersistencePending { isPersistencePending = true }
+        if persistenceError != nil { persistenceError = nil }
+        let snapshot = StoreSnapshot(projects: projects, columns: columns, tasks: tasks)
+        do {
+            try persistenceQueue.sync {
+                try Self.persist(snapshot, to: persistenceURL)
+            }
+            recordPersistenceResult(sequence: sequence, message: nil)
+        } catch {
+            recordPersistenceResult(sequence: sequence, message: error.localizedDescription)
+        }
+    }
+
+    private func recordPersistenceResult(sequence: Int, message: String?) {
+        guard sequence == persistenceSequence else { return }
+        isPersistencePending = false
+        persistenceError = message.map { "Unable to persist Boardly data: \($0)" }
+    }
+
+    nonisolated private static func persist(_ snapshot: StoreSnapshot, to url: URL) throws {
+        let data = try JSONEncoder().encode(snapshot)
+        try writeSnapshot(data, to: url)
     }
 
     nonisolated private static func writeSnapshot(_ data: Data, to url: URL) throws {
@@ -464,7 +607,7 @@ final class BoardStore: ObservableObject {
     }
 }
 
-private struct StoreSnapshot: Codable {
+private struct StoreSnapshot: Codable, Sendable {
     /// 当前写入版本：v1 = 旧版（status 字段、无 columns），v2 = 自定义列 + isDone。
     static let currentSchemaVersion = 2
 

@@ -7,6 +7,7 @@ struct TaskCardView: View {
     let task: BoardTask
     @Binding var directlyDraggedTaskID: BoardTask.ID?
     @Binding var directDragLocation: CGPoint?
+    let onDirectDragBegan: (BoardTask) -> Void
     let onDirectDragEnded: (BoardTask.ID, CGPoint) -> Void
 
     @State private var isHovering = false
@@ -67,12 +68,15 @@ struct TaskCardView: View {
         }
         .opacity(directlyDraggedTaskID == task.id ? 0.62 : 1)
         .contentShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous))
+        // 任务 frame 只服务于本地拖动的最终落点解析；空闲状态不创建 GeometryReader。
         .background {
-            GeometryReader { geometry in
-                Color.clear.preference(
-                    key: BoardlyTaskFramePreferenceKey.self,
-                    value: [task.id: geometry.frame(in: .named(BoardlyTheme.boardCoordinateSpace))]
-                )
+            if directlyDraggedTaskID != nil {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: BoardlyTaskFramePreferenceKey.self,
+                        value: [task.id: geometry.frame(in: .named(BoardlyTheme.boardCoordinateSpace))]
+                    )
+                }
             }
         }
         .onTapGesture { store.selectedTaskID = task.id }
@@ -86,6 +90,7 @@ struct TaskCardView: View {
                 .onChanged { value in
                     let now = CACurrentMediaTime()
                     if directlyDraggedTaskID != task.id {
+                        onDirectDragBegan(task)
                         directlyDraggedTaskID = task.id
                         directDragLocation = value.location
                         lastDragUpdateTime = now

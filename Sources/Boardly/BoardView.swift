@@ -11,18 +11,20 @@ struct BoardView: View {
     @State private var columnFrames: [BoardColumn.ID: CGRect] = [:]
     @State private var taskFrames: [BoardTask.ID: CGRect] = [:]
     @State private var directlyDraggedTaskID: BoardTask.ID?
+    @State private var draggedTask: BoardTask?
     @State private var directDragLocation: CGPoint?
 
-    private var visibleTasksByColumn: [BoardColumn.ID: [BoardTask]] {
+    private func visibleTasksByColumn(for columns: [BoardColumn]) -> [BoardColumn.ID: [BoardTask]] {
         var grouped: [BoardColumn.ID: [BoardTask]] = [:]
-        for column in store.orderedColumns {
+        for column in columns {
             grouped[column.id] = store.tasks(in: column.id, matching: searchText)
         }
         return grouped
     }
 
     var body: some View {
-        let tasksByColumn = visibleTasksByColumn
+        let orderedColumns = store.orderedColumns
+        let tasksByColumn = visibleTasksByColumn(for: orderedColumns)
         Group {
             if tasksByColumn.values.allSatisfy(\.isEmpty), !searchText.isEmpty {
                 ContentUnavailableView.search(text: searchText)
@@ -31,7 +33,7 @@ struct BoardView: View {
                 ZStack(alignment: .topLeading) {
                     ScrollView(.horizontal) {
                         LazyHStack(alignment: .top, spacing: 12) {
-                            ForEach(store.orderedColumns) { column in
+                            ForEach(orderedColumns) { column in
                                 TaskColumnView(
                                     column: column,
                                     tasks: tasksByColumn[column.id] ?? [],
@@ -40,6 +42,7 @@ struct BoardView: View {
                                     onDelete: { deletingColumn = column },
                                     directlyDraggedTaskID: $directlyDraggedTaskID,
                                     directDragLocation: $directDragLocation,
+                                    onDirectDragBegan: { draggedTask = $0 },
                                     onDirectDragEnded: handleDirectDragEnded
                                 )
                                 .frame(width: 280)
@@ -86,12 +89,8 @@ struct BoardView: View {
         }
     }
 
-    private var draggedTask: BoardTask? {
-        guard let directlyDraggedTaskID else { return nil }
-        return store.tasks.first(where: { $0.id == directlyDraggedTaskID })
-    }
-
     private func handleDirectDragEnded(taskID: BoardTask.ID, location: CGPoint) {
+        defer { draggedTask = nil }
         guard let targetColumn = columnFrames
             .filter({ $0.value.contains(location) })
             .sorted(by: { $0.value.minX < $1.value.minX })
@@ -154,6 +153,7 @@ private struct TaskColumnView: View {
     let onDelete: () -> Void
     @Binding var directlyDraggedTaskID: BoardTask.ID?
     @Binding var directDragLocation: CGPoint?
+    let onDirectDragBegan: (BoardTask) -> Void
     let onDirectDragEnded: (BoardTask.ID, CGPoint) -> Void
     @State private var isDropTarget = false
 
@@ -186,6 +186,7 @@ private struct TaskColumnView: View {
                                 task: task,
                                 directlyDraggedTaskID: $directlyDraggedTaskID,
                                 directDragLocation: $directDragLocation,
+                                onDirectDragBegan: onDirectDragBegan,
                                 onDirectDragEnded: onDirectDragEnded
                             )
                         }
@@ -196,12 +197,15 @@ private struct TaskColumnView: View {
             .boardlyScrollers()
         }
         .background(BoardlyTheme.column)
+        // 只有本地拖动会读取列 frame；普通滚动和编辑时不再持续向顶层回传几何状态。
         .background {
-            GeometryReader { geometry in
-                Color.clear.preference(
-                    key: BoardlyColumnFramePreferenceKey.self,
-                    value: [column.id: geometry.frame(in: .named(BoardlyTheme.boardCoordinateSpace))]
-                )
+            if directlyDraggedTaskID != nil {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: BoardlyColumnFramePreferenceKey.self,
+                        value: [column.id: geometry.frame(in: .named(BoardlyTheme.boardCoordinateSpace))]
+                    )
+                }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous))
