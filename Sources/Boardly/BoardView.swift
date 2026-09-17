@@ -11,6 +11,7 @@ struct BoardView: View {
     @State private var columnFrames: [BoardColumn.ID: CGRect] = [:]
     @State private var taskFrames: [BoardTask.ID: CGRect] = [:]
     @State private var directlyDraggedTaskID: BoardTask.ID?
+    @State private var directDragLocation: CGPoint?
 
     private var visibleTaskCount: Int {
         store.orderedColumns.reduce(0) { result, column in
@@ -24,29 +25,41 @@ struct BoardView: View {
                 ContentUnavailableView.search(text: searchText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: 12) {
-                        ForEach(store.orderedColumns) { column in
-                            TaskColumnView(
-                                column: column,
-                                searchText: searchText,
-                                onCreateTask: onCreateTask,
-                                onRename: { editingColumn = column },
-                                onDelete: { deletingColumn = column },
-                                directlyDraggedTaskID: $directlyDraggedTaskID,
-                                onDirectDragEnded: handleDirectDragEnded
-                            )
-                            .frame(width: 280)
-                            .containerRelativeFrame(.vertical)
-                        }
+                ZStack(alignment: .topLeading) {
+                    ScrollView(.horizontal) {
+                        LazyHStack(alignment: .top, spacing: 12) {
+                            ForEach(store.orderedColumns) { column in
+                                TaskColumnView(
+                                    column: column,
+                                    searchText: searchText,
+                                    onCreateTask: onCreateTask,
+                                    onRename: { editingColumn = column },
+                                    onDelete: { deletingColumn = column },
+                                    directlyDraggedTaskID: $directlyDraggedTaskID,
+                                    directDragLocation: $directDragLocation,
+                                    onDirectDragEnded: handleDirectDragEnded
+                                )
+                                .frame(width: 280)
+                                .containerRelativeFrame(.vertical)
+                            }
 
-                        addColumnPanel
+                            addColumnPanel
+                        }
+                        .padding(16)
                     }
-                    .padding(16)
+                    .scrollIndicators(.visible)
+                    .boardlyScrollers()
+                    .background(BoardlyTheme.canvas)
+
+                    if let draggedTask, let directDragLocation {
+                        TaskCardDragPreview(task: draggedTask)
+                            .position(directDragLocation)
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                            .shadow(color: .black.opacity(0.35), radius: 12, y: 8)
+                            .zIndex(100)
+                    }
                 }
-                .scrollIndicators(.visible)
-                .boardlyScrollers()
-                .background(BoardlyTheme.canvas)
                 .coordinateSpace(name: BoardlyTheme.boardCoordinateSpace)
                 .onPreferenceChange(BoardlyColumnFramePreferenceKey.self) { columnFrames = $0 }
                 .onPreferenceChange(BoardlyTaskFramePreferenceKey.self) { taskFrames = $0 }
@@ -64,6 +77,11 @@ struct BoardView: View {
                 }
             }
         }
+    }
+
+    private var draggedTask: BoardTask? {
+        guard let directlyDraggedTaskID else { return nil }
+        return store.tasks.first(where: { $0.id == directlyDraggedTaskID })
     }
 
     private func handleDirectDragEnded(taskID: BoardTask.ID, location: CGPoint) {
@@ -127,6 +145,7 @@ private struct TaskColumnView: View {
     let onRename: () -> Void
     let onDelete: () -> Void
     @Binding var directlyDraggedTaskID: BoardTask.ID?
+    @Binding var directDragLocation: CGPoint?
     let onDirectDragEnded: (BoardTask.ID, CGPoint) -> Void
     @State private var isDropTarget = false
 
@@ -162,6 +181,7 @@ private struct TaskColumnView: View {
                             TaskCardView(
                                 task: task,
                                 directlyDraggedTaskID: $directlyDraggedTaskID,
+                                directDragLocation: $directDragLocation,
                                 onDirectDragEnded: onDirectDragEnded
                             )
                         }

@@ -288,6 +288,24 @@ struct BoardlySheetHeader: View {
 
 // MARK: - 统一滚动条主题
 
+private final class BoardlyScroller: NSScroller {
+    private let trackColor = NSColor(calibratedWhite: 1, alpha: 0.06)
+    private let knobColor = NSColor(calibratedRed: 117 / 255, green: 103 / 255, blue: 248 / 255, alpha: 0.82)
+
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
+        guard scrollerStyle == .legacy else { return }
+        trackColor.setFill()
+        NSBezierPath(roundedRect: slotRect.insetBy(dx: 2, dy: 2), xRadius: 4, yRadius: 4).fill()
+    }
+
+    override func drawKnob() {
+        let knobRect = rect(for: .knob).insetBy(dx: 2, dy: 2)
+        guard !knobRect.isEmpty else { return }
+        knobColor.setFill()
+        NSBezierPath(roundedRect: knobRect, xRadius: 4, yRadius: 4).fill()
+    }
+}
+
 /// 全应用唯一的滚动条主题实现：定位最近的宿主 NSScrollView，把横/纵
 /// scroller 切到 overlay 样式（悬浮、无亮色轨道槽，不会出现系统亮色
 /// legacy 滚动条），并把滑块着色为 Theme 的 accent 同源色。
@@ -306,12 +324,21 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
 
     private static func theme(scrollView: NSScrollView?) {
         guard let scrollView else { return }
-        // overlay：无亮色轨道槽、悬浮不占内容空间（杜绝系统 legacy 亮色滚动条）；
-        // scroller 自身使用 vibrantDark 外观，滑块融入 Boardly 深色表面。
+        // overlay：无系统亮色轨道槽、悬浮不占内容空间；自定义 NSScroller
+        // 绘制固定的 Boardly 深色轨道和紫色滑块，避免系统外观覆盖主题。
         scrollView.scrollerStyle = .overlay
         let darkAppearance = NSAppearance(named: .vibrantDark)
-        scrollView.verticalScroller?.appearance = darkAppearance
-        scrollView.horizontalScroller?.appearance = darkAppearance
+
+        if !(scrollView.verticalScroller is BoardlyScroller) {
+            let scroller = BoardlyScroller(frame: scrollView.verticalScroller?.frame ?? .zero)
+            scroller.appearance = darkAppearance
+            scrollView.verticalScroller = scroller
+        }
+        if !(scrollView.horizontalScroller is BoardlyScroller) {
+            let scroller = BoardlyScroller(frame: scrollView.horizontalScroller?.frame ?? .zero)
+            scroller.appearance = darkAppearance
+            scrollView.horizontalScroller = scroller
+        }
     }
 
     private static func enclosingScrollViewOf(_ view: NSView) -> NSScrollView? {
