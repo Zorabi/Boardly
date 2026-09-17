@@ -48,14 +48,18 @@ struct BoardWorkspaceView: View {
                 HStack {
                     Spacer()
                     Button {
-                        openSettings()
+                        toggleSettings()
                     } label: {
-                        Label("设置", systemImage: "gearshape")
+                        Label(
+                            settingsIsOpen ? "关闭设置" : "设置",
+                            systemImage: settingsIsOpen ? "gearshape.fill" : "gearshape"
+                        )
                     }
                     .buttonStyle(BoardlySecondaryButtonStyle())
                     .keyboardShortcut("i", modifiers: [.command, .option])
-                    .help("打开看板设置 (⌥⌘I)")
-                    .accessibilityLabel("打开看板设置")
+                    .help(settingsIsOpen ? "关闭看板设置 (⌥⌘I)" : "打开看板设置 (⌥⌘I)")
+                    .accessibilityLabel(settingsIsOpen ? "关闭看板设置" : "打开看板设置")
+                    .accessibilityValue(settingsIsOpen ? "已打开" : "已关闭")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -94,9 +98,28 @@ struct BoardWorkspaceView: View {
         }
     }
 
-    private func openSettings() {
-        isSettingsPresented = true
-        presentInspector()
+    private var settingsIsOpen: Bool {
+        isSettingsPresented && isInspectorPresented
+    }
+
+    private func toggleSettings() {
+        if settingsIsOpen {
+            closeInspector()
+        } else {
+            isSettingsPresented = true
+            presentInspector()
+        }
+    }
+
+    private func closeInspector() {
+        isSettingsPresented = false
+        if reduceMotion {
+            isInspectorPresented = false
+        } else {
+            withAnimation(.easeIn(duration: 0.15)) {
+                isInspectorPresented = false
+            }
+        }
     }
 
     private func presentInspector() {
@@ -113,7 +136,7 @@ struct BoardWorkspaceView: View {
     private var inspectorContent: some View {
         if isSettingsPresented || store.selectedTaskID == nil {
             BoardlySettingsView(
-                onClose: { isInspectorPresented = false },
+                onClose: { closeInspector() },
                 onBack: store.selectedTaskID == nil ? nil : { isSettingsPresented = false }
             )
         } else if let selectedTask = store.task(withID: store.selectedTaskID) {
@@ -124,11 +147,11 @@ struct BoardWorkspaceView: View {
                         store.updateTask(updatedTask)
                     }
                 ),
-                onClose: { isInspectorPresented = false },
+                onClose: { closeInspector() },
                 onOpenSettings: { isSettingsPresented = true },
                 onDelete: {
                     store.deleteTask(id: selectedTask.id)
-                    isInspectorPresented = false
+                    closeInspector()
                 }
             )
         } else {
