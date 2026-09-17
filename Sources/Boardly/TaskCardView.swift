@@ -4,6 +4,7 @@ struct TaskCardView: View {
     @EnvironmentObject private var store: BoardStore
     let task: BoardTask
     @Binding var directlyDraggedTaskID: BoardTask.ID?
+    @Binding var directDragLocation: CGPoint?
     let onDirectDragEnded: (BoardTask.ID, CGPoint) -> Void
 
     @State private var isHovering = false
@@ -76,12 +77,14 @@ struct TaskCardView: View {
         // onDrop 作为系统拖放与辅助功能退路。
         .highPriorityGesture(
             DragGesture(minimumDistance: 10, coordinateSpace: .named(BoardlyTheme.boardCoordinateSpace))
-                .onChanged { _ in
+                .onChanged { value in
                     directlyDraggedTaskID = task.id
+                    directDragLocation = value.location
                 }
                 .onEnded { value in
                     let sourceID = task.id
                     directlyDraggedTaskID = nil
+                    directDragLocation = nil
                     onDirectDragEnded(sourceID, value.location)
                 }
         )
@@ -204,6 +207,48 @@ struct TaskCardView: View {
             parts.append("截止日期：\(dueDate.formatted(date: .long, time: .omitted))")
         }
         return parts.joined(separator: "，")
+    }
+}
+
+/// 本地 DragGesture 的跟手预览。它不参与命中测试，也不带菜单/拖放手势，
+/// 只负责让用户在拖动过程中看到正在移动的卡片内容。
+struct TaskCardDragPreview: View {
+    @EnvironmentObject private var store: BoardStore
+    let task: BoardTask
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let project = store.project(withID: task.projectID) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(BoardlyTheme.projectColor(named: project.colorName))
+                        .frame(width: 7, height: 7)
+                    Text(project.name)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(task.title)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+
+            if !task.notes.isEmpty {
+                Text(task.notes)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(12)
+        .frame(width: 260, alignment: .leading)
+        .background(BoardlyTheme.card.opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous)
+                .strokeBorder(BoardlyTheme.accent, lineWidth: 2)
+        }
     }
 }
 
