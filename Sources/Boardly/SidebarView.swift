@@ -5,6 +5,8 @@ struct SidebarView: View {
     @State private var isPresentingNewProject = false
     @State private var editingProject: Project?
     @State private var projectPendingDeletion: Project?
+    @State private var isShowingPersistenceSuccess = false
+    @State private var persistenceSuccessDismissal: Task<Void, Never>?
 
     var body: some View {
         let counts = sidebarCounts
@@ -46,14 +48,24 @@ struct SidebarView: View {
                     Image(systemName: "exclamationmark.triangle")
                     Text("保存不可用")
                         .help(persistenceError)
-                } else {
+                } else if isShowingPersistenceSuccess {
                     Image(systemName: "checkmark.seal")
                     Text("所有更改已保存")
                 }
             }
+            .frame(maxWidth: .infinity, minHeight: 16)
             .boardlyFont(.caption)
             .foregroundStyle(store.persistenceError == nil ? Color.secondary : BoardlyTheme.danger)
             .padding(.vertical, 8)
+        }
+        .onChange(of: store.isPersistencePending) { _, isPending in
+            if isPending { hidePersistenceSuccess() }
+        }
+        .onChange(of: store.persistenceSuccessRevision) { _, _ in
+            showPersistenceSuccessBriefly()
+        }
+        .onDisappear {
+            persistenceSuccessDismissal?.cancel()
         }
         .sheet(isPresented: $isPresentingNewProject) {
             NewProjectSheet()
@@ -121,6 +133,23 @@ struct SidebarView: View {
                 if !presented { projectPendingDeletion = nil }
             }
         )
+    }
+
+    private func showPersistenceSuccessBriefly() {
+        persistenceSuccessDismissal?.cancel()
+        isShowingPersistenceSuccess = true
+        persistenceSuccessDismissal = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            isShowingPersistenceSuccess = false
+            persistenceSuccessDismissal = nil
+        }
+    }
+
+    private func hidePersistenceSuccess() {
+        persistenceSuccessDismissal?.cancel()
+        persistenceSuccessDismissal = nil
+        isShowingPersistenceSuccess = false
     }
 
     private struct SidebarCounts {

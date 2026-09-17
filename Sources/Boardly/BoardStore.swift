@@ -14,6 +14,8 @@ final class BoardStore: ObservableObject {
     @Published private(set) var isPersistencePending = false
     /// 最近一次最新快照的落盘错误。保留错误而不是在后台静默丢弃，供 UI 或诊断日志观察。
     @Published private(set) var persistenceError: String?
+    /// 每次最新快照成功落盘后递增，供 UI 触发一次性的成功反馈；闲置状态不应常驻“已保存”。
+    @Published private(set) var persistenceSuccessRevision = 0
     private let persistenceURL: URL?
     /// 所有编码与写盘都在同一串行队列完成，因此后提交的快照绝不会被更早的快照覆盖。
     private let persistenceQueue = DispatchQueue(
@@ -586,6 +588,7 @@ final class BoardStore: ObservableObject {
         guard sequence == persistenceSequence else { return }
         isPersistencePending = false
         persistenceError = message.map { "Unable to persist Boardly data: \($0)" }
+        if message == nil { persistenceSuccessRevision &+= 1 }
     }
 
     nonisolated private static func persist(_ snapshot: StoreSnapshot, to url: URL) throws {
