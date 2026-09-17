@@ -30,6 +30,7 @@ struct BoardWorkspaceView: View {
     @State private var searchText = ""
     @State private var newTaskContext: NewTaskContext?
     @State private var isInspectorPresented = false
+    @State private var isSettingsPresented = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     /// 携带目标列的新建任务上下文：从工具栏进入默认首列，从列头进入则预填该列。
@@ -64,9 +65,8 @@ struct BoardWorkspaceView: View {
                 } label: {
                     Label("任务详情", systemImage: "sidebar.right")
                 }
-                .disabled(store.selectedTaskID == nil)
                 .keyboardShortcut("i", modifiers: [.command, .option])
-                .help("显示或隐藏任务详情 (⌥⌘I)")
+                .help("显示或隐藏任务详情；未选择任务时打开看板设置 (⌥⌘I)")
             }
         }
         .inspector(isPresented: $isInspectorPresented) {
@@ -79,6 +79,7 @@ struct BoardWorkspaceView: View {
         }
         .onChange(of: store.selectedTaskID) { _, selectedTaskID in
             guard selectedTaskID != nil else { return }
+            isSettingsPresented = false
             presentInspector()
         }
     }
@@ -87,6 +88,8 @@ struct BoardWorkspaceView: View {
         if isInspectorPresented {
             isInspectorPresented = false
         } else {
+            // 没有选中任务时，右上角入口仍然有明确用途：直接打开看板设置。
+            isSettingsPresented = store.selectedTaskID == nil
             presentInspector()
         }
     }
@@ -103,7 +106,12 @@ struct BoardWorkspaceView: View {
 
     @ViewBuilder
     private var inspectorContent: some View {
-        if let selectedTask = store.task(withID: store.selectedTaskID) {
+        if isSettingsPresented || store.selectedTaskID == nil {
+            BoardlySettingsView(
+                onClose: { isInspectorPresented = false },
+                onBack: store.selectedTaskID == nil ? nil : { isSettingsPresented = false }
+            )
+        } else if let selectedTask = store.task(withID: store.selectedTaskID) {
             TaskInspectorView(
                 task: Binding(
                     get: { store.task(withID: selectedTask.id) ?? selectedTask },
@@ -112,6 +120,7 @@ struct BoardWorkspaceView: View {
                     }
                 ),
                 onClose: { isInspectorPresented = false },
+                onOpenSettings: { isSettingsPresented = true },
                 onDelete: {
                     store.deleteTask(id: selectedTask.id)
                     isInspectorPresented = false

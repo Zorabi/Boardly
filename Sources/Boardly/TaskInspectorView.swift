@@ -4,11 +4,18 @@ struct TaskInspectorView: View {
     @EnvironmentObject private var store: BoardStore
     @Binding var task: BoardTask
     let onClose: () -> Void
+    let onOpenSettings: (() -> Void)?
     let onDelete: () -> Void
 
-    init(task: Binding<BoardTask>, onClose: @escaping () -> Void, onDelete: @escaping () -> Void) {
+    init(
+        task: Binding<BoardTask>,
+        onClose: @escaping () -> Void,
+        onOpenSettings: (() -> Void)? = nil,
+        onDelete: @escaping () -> Void
+    ) {
         _task = task
         self.onClose = onClose
+        self.onOpenSettings = onOpenSettings
         self.onDelete = onDelete
     }
 
@@ -106,6 +113,14 @@ struct TaskInspectorView: View {
             Label("任务详情", systemImage: "slider.horizontal.3")
                 .font(.headline)
             Spacer()
+            if let onOpenSettings {
+                Button(action: onOpenSettings) {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(BoardlyIconButtonStyle())
+                .help("打开看板设置")
+                .accessibilityLabel("打开看板设置")
+            }
             Button(action: onClose) {
                 Image(systemName: "xmark")
             }

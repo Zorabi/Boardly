@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TaskCardView: View {
     @EnvironmentObject private var store: BoardStore
+    @EnvironmentObject private var settings: BoardlySettings
     let task: BoardTask
     @Binding var directlyDraggedTaskID: BoardTask.ID?
     @Binding var directDragLocation: CGPoint?
@@ -14,7 +15,7 @@ struct TaskCardView: View {
     private var isInDoneColumn: Bool { store.isDoneColumn(task.columnID) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: settings.cardDensity.cardContentSpacing) {
             headerRow
 
             Text(task.title)
@@ -24,7 +25,7 @@ struct TaskCardView: View {
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !task.notes.isEmpty {
+            if settings.showTaskNotes, !task.notes.isEmpty {
                 Text(task.notes)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -32,9 +33,11 @@ struct TaskCardView: View {
                     .multilineTextAlignment(.leading)
             }
 
-            metadata
+            if settings.showTaskMetadata {
+                metadata
+            }
         }
-        .padding(12)
+        .padding(settings.cardDensity.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             isSelected
@@ -214,10 +217,11 @@ struct TaskCardView: View {
 /// 只负责让用户在拖动过程中看到正在移动的卡片内容。
 struct TaskCardDragPreview: View {
     @EnvironmentObject private var store: BoardStore
+    @EnvironmentObject private var settings: BoardlySettings
     let task: BoardTask
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: settings.cardDensity.cardContentSpacing) {
             if let project = store.project(withID: task.projectID) {
                 HStack(spacing: 6) {
                     Circle()
@@ -234,14 +238,14 @@ struct TaskCardDragPreview: View {
                 .foregroundStyle(.primary)
                 .lineLimit(2)
 
-            if !task.notes.isEmpty {
+            if settings.showTaskNotes, !task.notes.isEmpty {
                 Text(task.notes)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
         }
-        .padding(12)
+        .padding(settings.cardDensity.cardPadding)
         .frame(width: 260, alignment: .leading)
         .background(BoardlyTheme.card.opacity(0.96))
         .clipShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusCard, style: .continuous))
