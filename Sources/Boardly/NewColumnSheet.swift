@@ -35,55 +35,54 @@ struct NewColumnSheet: View {
                 subtitle: "创建自定义状态列，例如“测试中”或“验证中”。"
             )
 
-            // 原生 Form：LabeledContent 保证字段标签可见；颜色网格 adaptive 换行，
-            // 在 420–460pt 宽度下不会横向撑宽或裁切。
-            Form {
-                Section("基本信息") {
-                    LabeledContent("名称") {
-                        TextField("例如：测试中", text: $name)
-                            .textFieldStyle(BoardlyTextFieldStyle())
-                            .focused($focusedField, equals: .name)
-                            .onSubmit(createColumn)
-                            .accessibilityHint("必填")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    BoardlyFormSection("基本信息") {
+                        BoardlyFormRow(label: "名称") {
+                            TextField("例如：测试中", text: $name)
+                                .textFieldStyle(BoardlyTextFieldStyle())
+                                .focused($focusedField, equals: .name)
+                                .onSubmit(createColumn)
+                                .accessibilityHint("必填")
+                        }
+                        BoardlyFormRow(label: "位置") {
+                            placementPicker
+                        }
+                        BoardlyFormRow(label: "图标") {
+                            symbolPicker
+                        }
                     }
-                    LabeledContent("位置") {
-                        placementPicker
-                    }
-                    LabeledContent("图标") {
-                        symbolPicker
-                    }
-                }
 
-                Section("外观") {
-                    LabeledContent("颜色") {
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 32), spacing: 8)],
-                            spacing: 8
-                        ) {
-                            ForEach(BoardlyTheme.projectColorOptions) { option in
-                                colorSwatch(option)
+                    BoardlyFormSection("外观") {
+                        BoardlyFormRow(label: "颜色", alignment: .top, labelTopPadding: 7) {
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 30), spacing: 8)],
+                                spacing: 8
+                            ) {
+                                ForEach(BoardlyTheme.projectColorOptions) { option in
+                                    colorSwatch(option)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    BoardlyFormSection("语义") {
+                        Toggle(isOn: $isDone) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("完成列")
+                                Text("该列任务视为已完成：不计入侧栏未完成数，看板中置灰显示。")
+                                    .boardlyFont(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
-                        .frame(maxWidth: .infinity)
+                        .toggleStyle(.switch)
                     }
                 }
-
-                Section("语义") {
-                    Toggle(isOn: $isDone) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("完成列")
-                            Text("该列任务视为已完成：不计入侧栏未完成数，看板中置灰显示。")
-                                .boardlyFont(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .toggleStyle(.switch)
-                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
             .boardlyScrollers()
-            .background(BoardlyTheme.canvas)
 
             Divider()
 
@@ -99,7 +98,7 @@ struct NewColumnSheet: View {
             }
             .padding(16)
         }
-        .frame(width: 440, height: 470)
+        .frame(width: 440, height: 560)
         .onAppear {
             focusedField = .name
             if placement == nil {

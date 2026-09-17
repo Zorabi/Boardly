@@ -304,14 +304,29 @@ struct BoardlyFormSection<Content: View>: View {
 /// 表单行：左侧字段名 + 右侧控件，保证所有表单的标签对齐一致。
 struct BoardlyFormRow<Control: View>: View {
     let label: String
-    @ViewBuilder var control: Control
+    let alignment: VerticalAlignment
+    let labelTopPadding: CGFloat
+    let control: Control
+
+    init(
+        label: String,
+        alignment: VerticalAlignment = .firstTextBaseline,
+        labelTopPadding: CGFloat = 0,
+        @ViewBuilder control: () -> Control
+    ) {
+        self.label = label
+        self.alignment = alignment
+        self.labelTopPadding = labelTopPadding
+        self.control = control()
+    }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: alignment) {
             Text(label)
                 .boardlyFont(.subheadline)
                 .foregroundStyle(.secondary)
                 .frame(width: 64, alignment: .leading)
+                .padding(.top, labelTopPadding)
             control
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -350,6 +365,7 @@ struct BoardlyTextEditor: View {
             .scrollContentBackground(.hidden)
             .scrollIndicators(.automatic)
             .frame(height: height)
+            .boardlyScrollers()
             .padding(6)
             .background(
                 RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusField, style: .continuous)
@@ -416,7 +432,8 @@ private final class BoardlyScroller: NSScroller {
 
 /// 全应用滚动容器主题：定位最近的宿主 NSScrollView 及其嵌套容器，
 /// 把普通横/纵 scroller 切到 overlay 样式并使用主题色。
-/// TextEditor 保留 AppKit 原生自动隐藏滚动条，避免无溢出时出现禁用的满高滑块。
+/// TextEditor 同样使用主题滑块，但保留 AppKit 的自动隐藏行为，
+/// 避免无溢出时出现禁用的满高滑块。
 private struct BoardlyScrollerThemer: NSViewRepresentable {
     final class Coordinator {
         var didTheme = false
@@ -481,16 +498,13 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
     }
 
     private static func theme(scrollView: NSScrollView) {
-        // TextEditor 自带完整的 AppKit 文本滚动行为。保留其原生 overlay scroller，
-        // 让短文本自动隐藏、长文本溢出后才出现，避免禁用状态下的满高“假滑块”。
-        if scrollView.documentView is NSTextView {
-            scrollView.scrollerStyle = .overlay
+        let isTextEditor = scrollView.documentView is NSTextView
+        if isTextEditor {
             scrollView.autohidesScrollers = true
-            return
         }
 
-        // overlay：无系统亮色轨道槽、悬浮不占内容空间；自定义 NSScroller
-        // 绘制固定的 Boardly 深色轨道和紫色滑块，避免系统外观覆盖主题。
+        // 统一使用不占内容空间的 overlay；TextEditor 在自身挂载主题器，
+        // 避免依赖父级扫描导致系统灰色滑块漏网。
         if scrollView.scrollerStyle != .overlay {
             scrollView.scrollerStyle = .overlay
         }
