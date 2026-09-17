@@ -78,9 +78,10 @@ struct TaskCardView: View {
         .onTapGesture { store.selectedTaskID = task.id }
         .onHover { isHovering = $0 }
         // 整张卡片正文由本地 DragGesture 负责拖动，避免 macOS SwiftUI
-        // onDrag 启动 NSDraggingSession 时吞掉短距离移动。列/卡片仍保留
-        // onDrop 作为系统拖放与辅助功能退路。
-        .highPriorityGesture(
+        // onDrag 启动 NSDraggingSession 时吞掉短距离移动。使用并行手势，
+        // 不让拖动手势抢在点按手势前等待阈值，从而让详情面板立即响应。
+        // 列/卡片仍保留 onDrop 作为系统拖放与辅助功能退路。
+        .simultaneousGesture(
             DragGesture(minimumDistance: 10, coordinateSpace: .named(BoardlyTheme.boardCoordinateSpace))
                 .onChanged { value in
                     let now = CACurrentMediaTime()
