@@ -399,10 +399,10 @@ private final class BoardlyScroller: NSScroller {
     }
 }
 
-/// 全应用唯一的滚动条主题实现：定位最近的宿主 NSScrollView，把横/纵
-/// scroller 切到 overlay 样式（悬浮、无亮色轨道槽，不会出现系统亮色
-/// legacy 滚动条），并把滑块着色为 Theme 的 accent 同源色。
-/// 看板横向、列内纵向与表单 ScrollView 共用这一个实现。
+/// 全应用唯一的滚动条主题实现：定位最近的宿主 NSScrollView 及其嵌套
+/// 滚动容器，把横/纵 scroller 切到 overlay 样式（悬浮、无亮色轨道槽，
+/// 不会出现系统亮色 legacy 滚动条），并把滑块着色为 Theme 的 accent 同源色。
+/// 看板横向、列内纵向、表单 ScrollView 与 TextEditor 内部滚动区共用这一个实现。
 private struct BoardlyScrollerThemer: NSViewRepresentable {
     final class Coordinator {
         var didTheme = false
@@ -443,14 +443,15 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
             guard !coordinator.didTheme else { return }
 
             if let scrollView = Self.enclosingScrollViewOf(view) {
-                Self.theme(scrollView: scrollView)
+                Self.theme(scrollViewAndDescendantsOf: scrollView)
                 coordinator.didTheme = true
 
                 // SwiftUI 可能在第一次布局后替换原生 scroller；再校验一次，
                 // 仍只发生在挂载阶段，不影响正常滚动性能。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak view] in
                     guard let view else { return }
-                    Self.theme(scrollView: Self.enclosingScrollViewOf(view))
+                    guard let scrollView = Self.enclosingScrollViewOf(view) else { return }
+                    Self.theme(scrollViewAndDescendantsOf: scrollView)
                 }
             } else if attempt < 12 {
                 self.scheduleTheme(for: view, coordinator: coordinator)
@@ -458,8 +459,14 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
         }
     }
 
-    private static func theme(scrollView: NSScrollView?) {
-        guard let scrollView else { return }
+    private static func theme(scrollViewAndDescendantsOf scrollView: NSScrollView) {
+        let scrollViews = [scrollView] + descendantScrollViews(of: scrollView)
+        for scrollView in scrollViews {
+            theme(scrollView: scrollView)
+        }
+    }
+
+    private static func theme(scrollView: NSScrollView) {
         // overlay：无系统亮色轨道槽、悬浮不占内容空间；自定义 NSScroller
         // 绘制固定的 Boardly 深色轨道和紫色滑块，避免系统外观覆盖主题。
         if scrollView.scrollerStyle != .overlay {
@@ -476,6 +483,17 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
             let scroller = BoardlyScroller(frame: scrollView.horizontalScroller?.frame ?? .zero)
             scroller.appearance = darkAppearance
             scrollView.horizontalScroller = scroller
+        }
+    }
+
+    private static func descendantScrollViews(of view: NSView) -> [NSScrollView] {
+        view.subviews.flatMap { child in
+            var matches: [NSScrollView] = []
+            if let scrollView = child as? NSScrollView {
+                matches.append(scrollView)
+            }
+            matches.append(contentsOf: descendantScrollViews(of: child))
+            return matches
         }
     }
 
