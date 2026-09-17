@@ -132,6 +132,9 @@ struct ColumnDeleteSheet: View {
             .contentShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusField, style: .continuous))
         }
         .buttonStyle(BoardlyPlainButtonStyle())
+        // 迁移行是可键盘访问的 Button；关闭 macOS 默认的焦点环，
+        // 保留这里已有的选中背景与勾选图标作为状态反馈。
+        .focusEffectDisabled()
         .accessibilityLabel("迁移到\(target.name)")
         .accessibilityAddTraits(migrationTargetID == target.id ? .isSelected : [])
     }
