@@ -376,8 +376,10 @@ struct BoardlyTextEditor: View {
                     Text(prompt)
                         .boardlyFont(.body)
                         .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
+                        // 匹配 TextEditor 的外边距与 NSTextView 文本容器内边距，
+                        // 让占位文字和实际输入使用同一基线。
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
                         .allowsHitTesting(false)
                 }
             }

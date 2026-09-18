@@ -322,7 +322,6 @@ final class BoardStore: ObservableObject {
             sortOrder: nextOrder
         )
         tasks.append(task)
-        selectedTaskID = task.id
         persist()
         return task.id
     }

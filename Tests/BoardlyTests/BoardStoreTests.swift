@@ -642,6 +642,22 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertNil(store.task(withID: taskID)?.projectID, "失效项目引用必须归一为未分类")
     }
 
+    func testAddTaskDoesNotOpenTheNewTaskForInspection() throws {
+        let store = BoardStore()
+
+        let taskID = try XCTUnwrap(store.addTask(
+            title: "新任务",
+            notes: "",
+            columnID: DefaultColumns.todoID,
+            priority: .medium,
+            projectID: nil,
+            dueDate: nil
+        ))
+
+        XCTAssertNotNil(store.task(withID: taskID))
+        XCTAssertNil(store.selectedTaskID, "创建完成后应回到看板，不应立即打开新任务详情")
+    }
+
     func testSnapshotDanglingProjectReferenceIsNormalizedToInbox() throws {
         let json = #"{"schemaVersion":2,"projects":[],"columns":[{"id":"5F1F9E4A-2E1B-4B6D-9A71-0C1D2E3F4002","name":"待办","symbol":"circle","colorName":"blue","sortOrder":0,"isDone":false}],"tasks":[{"id":"aaaaaaaa-0000-0000-0000-000000000011","title":"悬空项目","columnID":"5F1F9E4A-2E1B-4B6D-9A71-0C1D2E3F4002","projectID":"bbbbbbbb-0000-0000-0000-000000000011","sortOrder":0}]}"#
 
