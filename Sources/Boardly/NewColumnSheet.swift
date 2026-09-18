@@ -10,9 +10,6 @@ struct NewColumnSheet: View {
     /// 插入位置：最前 / 在某列之后（“末列之后”即追加到末尾）。
     /// onAppear 时按“首个完成列之前”初始化；nil 表示尚未初始化。
     @State private var placement: Placement?
-    @FocusState private var focusedField: Field?
-
-    private enum Field { case name }
 
     /// 位置选择用标签：最前，或现有各列之后（末列之后 = 末尾）。
     enum Placement: Hashable {
@@ -39,10 +36,13 @@ struct NewColumnSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     BoardlyFormSection("基本信息") {
                         BoardlyFormRow(label: "名称") {
-                            TextField("例如：测试中", text: $name)
-                                .textFieldStyle(BoardlyTextFieldStyle())
-                                .focused($focusedField, equals: .name)
-                                .onSubmit(createColumn)
+                            BoardlyTextField(
+                                label: "列名称",
+                                text: $name,
+                                prompt: "例如：测试中",
+                                autoFocus: true,
+                                onSubmit: createColumn
+                            )
                                 .accessibilityHint("必填")
                         }
                         BoardlyFormRow(label: "位置") {
@@ -100,7 +100,6 @@ struct NewColumnSheet: View {
         }
         .frame(width: 440, height: 560)
         .onAppear {
-            focusedField = .name
             if placement == nil {
                 placement = defaultPlacement
             }

@@ -6,9 +6,6 @@ struct NewProjectSheet: View {
     @State private var name = ""
     @State private var symbol = "folder"
     @State private var colorName = "violet"
-    @FocusState private var focusedField: Field?
-
-    private enum Field { case name }
 
     private var canSubmit: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -25,10 +22,13 @@ struct NewProjectSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     BoardlyFormSection("基本信息") {
                         BoardlyFormRow(label: "名称") {
-                            TextField("项目名称", text: $name, prompt: Text("例如：家庭改造"))
-                                .textFieldStyle(BoardlyTextFieldStyle())
-                                .focused($focusedField, equals: .name)
-                                .onSubmit(createProject)
+                            BoardlyTextField(
+                                label: "项目名称",
+                                text: $name,
+                                prompt: "例如：家庭改造",
+                                autoFocus: true,
+                                onSubmit: createProject
+                            )
                                 .accessibilityHint("必填")
                         }
                     }
@@ -77,7 +77,6 @@ struct NewProjectSheet: View {
             .padding(16)
         }
         .frame(width: 420, height: 420)
-        .onAppear { focusedField = .name }
     }
 
     private func colorSwatch(_ option: BoardlyTheme.ProjectColorOption) -> some View {

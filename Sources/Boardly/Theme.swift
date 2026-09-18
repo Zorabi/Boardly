@@ -353,6 +353,40 @@ struct BoardlyTextFieldStyle: TextFieldStyle {
     }
 }
 
+/// 单行/可扩展文本输入：统一处理自动聚焦与占位文字焦点态。
+/// 空字段获得焦点时隐藏提示，避免输入光标紧贴占位文字。
+struct BoardlyTextField: View {
+    let label: String
+    @Binding var text: String
+    var prompt: String?
+    var axis: Axis = .horizontal
+    var autoFocus = false
+    var onSubmit: (() -> Void)?
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(
+            label,
+            text: $text,
+            prompt: promptText,
+            axis: axis
+        )
+        .textFieldStyle(BoardlyTextFieldStyle())
+        .focused($isFocused)
+        .onSubmit { onSubmit?() }
+        .onAppear {
+            if autoFocus { isFocused = true }
+        }
+    }
+
+    private var promptText: Text? {
+        // nil 会让 SwiftUI 回退显示 label；聚焦时传入显式空提示，
+        // 既保留输入框的语义标签，又不让文字贴着光标。
+        guard !isFocused else { return Text("") }
+        return prompt.map(Text.init)
+    }
+}
+
 /// 多行文本编辑器：与 BoardlyTextFieldStyle 相同的表面。
 struct BoardlyTextEditor: View {
     @Binding var text: String
