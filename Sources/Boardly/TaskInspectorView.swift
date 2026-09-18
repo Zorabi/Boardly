@@ -31,8 +31,12 @@ struct TaskInspectorView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     BoardlyFormSection("内容") {
-                        TextField("标题", text: $draft.title, axis: .vertical)
-                            .textFieldStyle(BoardlyTextFieldStyle())
+                        BoardlyTextField(
+                            label: "标题",
+                            text: $draft.title,
+                            prompt: "标题",
+                            axis: .vertical
+                        )
                             .lineLimit(1...3)
 
                         VStack(alignment: .leading, spacing: 6) {

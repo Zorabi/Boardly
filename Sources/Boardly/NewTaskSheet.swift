@@ -11,9 +11,6 @@ struct NewTaskSheet: View {
     @State private var hasDueDate = false
     @State private var dueDate = Date.now
     @State private var submissionError: String?
-    @FocusState private var focusedField: Field?
-
-    private enum Field { case title }
 
     /// 从列头进入时预填该列；从工具栏进入为 nil，默认第一列。
     init(initialColumnID: BoardColumn.ID? = nil) {
@@ -34,10 +31,13 @@ struct NewTaskSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     BoardlyFormSection("任务内容") {
-                        TextField("标题", text: $title, prompt: Text("例如：整理季度计划"))
-                            .textFieldStyle(BoardlyTextFieldStyle())
-                            .focused($focusedField, equals: .title)
-                            .onSubmit(submit)
+                        BoardlyTextField(
+                            label: "标题",
+                            text: $title,
+                            prompt: "例如：整理季度计划",
+                            autoFocus: true,
+                            onSubmit: submit
+                        )
                             .accessibilityHint("必填")
 
                         VStack(alignment: .leading, spacing: 6) {
@@ -127,7 +127,6 @@ struct NewTaskSheet: View {
                 columnID = store.orderedColumns.first?.id
             }
             if case let .project(id) = store.selectedScope { projectID = id }
-            focusedField = .title
         }
     }
 

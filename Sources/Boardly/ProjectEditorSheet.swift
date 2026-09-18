@@ -5,9 +5,6 @@ struct ProjectEditorSheet: View {
     @EnvironmentObject private var store: BoardStore
     @Environment(\.dismiss) private var dismiss
     @State private var draft: Project
-    @FocusState private var focusedField: Field?
-
-    private enum Field { case name }
 
     init(project: Project) {
         _draft = State(initialValue: project)
@@ -33,10 +30,13 @@ struct ProjectEditorSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     BoardlyFormSection("基本信息") {
                         BoardlyFormRow(label: "名称") {
-                            TextField("项目名称", text: $draft.name, prompt: Text("例如：家庭改造"))
-                                .textFieldStyle(BoardlyTextFieldStyle())
-                                .focused($focusedField, equals: .name)
-                                .onSubmit(saveProject)
+                            BoardlyTextField(
+                                label: "项目名称",
+                                text: $draft.name,
+                                prompt: "例如：家庭改造",
+                                autoFocus: true,
+                                onSubmit: saveProject
+                            )
                                 .accessibilityHint("必填")
                         }
                     }
@@ -85,7 +85,6 @@ struct ProjectEditorSheet: View {
             .padding(16)
         }
         .frame(width: 420, height: 420)
-        .onAppear { focusedField = .name }
     }
 
     private func colorSwatch(_ option: BoardlyTheme.ProjectColorOption) -> some View {
