@@ -356,11 +356,13 @@ struct BoardlyTextFieldStyle: TextFieldStyle {
 /// 多行文本编辑器：与 BoardlyTextFieldStyle 相同的表面。
 struct BoardlyTextEditor: View {
     @Binding var text: String
+    @FocusState private var isFocused: Bool
     var height: CGFloat = 110
     var prompt: String?
 
     var body: some View {
         TextEditor(text: $text)
+            .focused($isFocused)
             .boardlyFont(.body)
             .scrollContentBackground(.hidden)
             .scrollIndicators(.automatic)
@@ -372,7 +374,7 @@ struct BoardlyTextEditor: View {
                     .fill(BoardlyTheme.field)
             )
             .overlay(alignment: .topLeading) {
-                if text.isEmpty, let prompt {
+                if text.isEmpty, !isFocused, let prompt {
                     Text(prompt)
                         .boardlyFont(.body)
                         .foregroundStyle(.tertiary)
