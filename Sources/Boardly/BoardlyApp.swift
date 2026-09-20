@@ -21,6 +21,12 @@ struct BoardlyApp: App {
                 // 窗口拖动、工具栏按钮与搜索框。
                 .background(BoardlyWindowChrome())
                 .background(BoardlyTheme.canvas)
+                .onAppear {
+                    store.updateBackupConfiguration(settings.backupConfiguration)
+                }
+                .onChange(of: settings.backupConfiguration) { _, configuration in
+                    store.updateBackupConfiguration(configuration)
+                }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     // 终止通知仍在主线程发送；这里刻意同步排空最新快照，避免最后一次编辑丢失。
                     store.flushPersistence()

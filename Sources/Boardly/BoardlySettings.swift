@@ -2,8 +2,8 @@ import Combine
 import Foundation
 import SwiftUI
 
-/// 看板显示设置：只保存 UI 偏好，不写入 board.json，避免把设备显示习惯
-/// 与任务数据混在一起。设置通过 UserDefaults 持久化，修改后立即反映到当前窗口。
+/// 看板显示与备份策略：只保存设备级偏好，不写入 board.json，避免把显示习惯
+/// 和保留周期混入任务数据。设置通过 UserDefaults 持久化，修改后立即反映到当前窗口。
 @MainActor
 final class BoardlySettings: ObservableObject {
     private static let minimumFontScale = 0.85
@@ -76,11 +76,50 @@ final class BoardlySettings: ObservableObject {
         }
     }
 
+    enum BackupDailyRetention: Int, CaseIterable, Identifiable, Sendable {
+        case oneWeek = 7
+        case oneMonth = 30
+        case threeMonths = 90
+        case oneYear = 365
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .oneWeek: "7 天"
+            case .oneMonth: "30 天"
+            case .threeMonths: "90 天"
+            case .oneYear: "1 年"
+            }
+        }
+    }
+
+    enum BackupMonthlyRetention: Int, CaseIterable, Identifiable, Sendable {
+        case none = 0
+        case threeMonths = 3
+        case oneYear = 12
+        case twoYears = 24
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .none: "不保留"
+            case .threeMonths: "3 个月"
+            case .oneYear: "12 个月"
+            case .twoYears: "24 个月"
+            }
+        }
+    }
+
     private enum Key {
         static let fontScale = "boardly.settings.fontScale"
         static let showTaskNotes = "boardly.settings.showTaskNotes"
         static let showTaskMetadata = "boardly.settings.showTaskMetadata"
         static let cardDensity = "boardly.settings.cardDensity"
+        static let periodicSnapshotsEnabled = "boardly.settings.periodicSnapshotsEnabled"
+        static let backupDailyRetention = "boardly.settings.backupDailyRetention"
+        static let backupMonthlyRetention = "boardly.settings.backupMonthlyRetention"
     }
 
     private let defaults: UserDefaults
@@ -108,6 +147,19 @@ final class BoardlySettings: ObservableObject {
         didSet { defaults.set(cardDensity.rawValue, forKey: Key.cardDensity) }
     }
 
+    /// 控制普通保存时的每日快照；删除前安全快照不受此项影响。
+    @Published var periodicSnapshotsEnabled: Bool {
+        didSet { defaults.set(periodicSnapshotsEnabled, forKey: Key.periodicSnapshotsEnabled) }
+    }
+
+    @Published var backupDailyRetention: BackupDailyRetention {
+        didSet { defaults.set(backupDailyRetention.rawValue, forKey: Key.backupDailyRetention) }
+    }
+
+    @Published var backupMonthlyRetention: BackupMonthlyRetention {
+        didSet { defaults.set(backupMonthlyRetention.rawValue, forKey: Key.backupMonthlyRetention) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
@@ -118,6 +170,13 @@ final class BoardlySettings: ObservableObject {
         self.cardDensity = CardDensity(
             rawValue: defaults.string(forKey: Key.cardDensity) ?? ""
         ) ?? .standard
+        self.periodicSnapshotsEnabled = defaults.object(forKey: Key.periodicSnapshotsEnabled) as? Bool ?? true
+        self.backupDailyRetention = BackupDailyRetention(
+            rawValue: defaults.object(forKey: Key.backupDailyRetention) as? Int ?? BackupConfiguration.defaultDailyRetentionDays
+        ) ?? .oneMonth
+        self.backupMonthlyRetention = BackupMonthlyRetention(
+            rawValue: defaults.object(forKey: Key.backupMonthlyRetention) as? Int ?? BackupConfiguration.defaultMonthlyRetentionMonths
+        ) ?? .oneYear
     }
 
     var fontSizePreset: FontSizePreset {
@@ -140,10 +199,21 @@ final class BoardlySettings: ObservableObject {
         }
     }
 
+    var backupConfiguration: BackupConfiguration {
+        BackupConfiguration(
+            isPeriodicSnapshotsEnabled: periodicSnapshotsEnabled,
+            dailyRetentionDays: backupDailyRetention.rawValue,
+            monthlyRetentionMonths: backupMonthlyRetention.rawValue
+        )
+    }
+
     func resetToDefaults() {
         fontScale = FontSizePreset.standard.scale
         showTaskNotes = true
         showTaskMetadata = true
         cardDensity = .standard
+        periodicSnapshotsEnabled = true
+        backupDailyRetention = .oneMonth
+        backupMonthlyRetention = .oneYear
     }
 }

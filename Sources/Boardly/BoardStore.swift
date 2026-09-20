@@ -1,6 +1,26 @@
 import Combine
 import Foundation
 
+private enum BackupWriteError: LocalizedError {
+    case verificationFailed
+
+    var errorDescription: String? {
+        "自动备份写入后校验失败。"
+    }
+}
+
+/// 区分“内容损坏”与“来自更新版本”的文件：后者不能被旧版应用自动覆盖。
+private enum SnapshotLoadError: LocalizedError {
+    case unsupportedFutureSchemaVersion(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unsupportedFutureSchemaVersion(version):
+            "board.json 使用了当前版本不支持的 schemaVersion \(version)。"
+        }
+    }
+}
+
 @MainActor
 final class BoardStore: ObservableObject {
     @Published var projects: [Project]
@@ -24,6 +44,13 @@ final class BoardStore: ObservableObject {
     )
     private var pendingPersistenceTask: Task<Void, Never>?
     private var persistenceSequence = 0
+    private var backupConfiguration: BackupConfiguration
+    /// 破坏性操作的变更前快照会在后续每次写入中重试，直到真的落盘到 auto 目录。
+    private var pendingDestructiveBackup: PendingDestructiveBackup?
+    private var destructiveBackupSequence = 0
+    /// 原文件已完整存入 recovery、但自身无法解码时，首次成功写入不再尝试把它作为普通自动快照。
+    /// 这样既不会覆盖未备份的原始字节，也不会因“校验损坏文件”而永久无法保存新的干净数据。
+    private var skipsPeriodicSnapshotUntilSuccessfulPersistence: Bool
     private var taskGroups: [BoardColumn.ID: [BoardTask]]?
     private var taskQueryCache: CachedTaskQuery?
 
@@ -39,18 +66,27 @@ final class BoardStore: ObservableObject {
         let groups: [BoardColumn.ID: [BoardTask]]
     }
 
+    private struct PendingDestructiveBackup: Sendable {
+        let id: Int
+        let snapshot: StoreSnapshot
+    }
+
     init(
         projects: [Project] = [],
         columns: [BoardColumn] = DefaultColumns.makeDefaults(),
         tasks: [BoardTask] = [],
         persistenceURL: URL? = nil,
-        initialPersistenceError: String? = nil
+        backupConfiguration: BackupConfiguration = .default,
+        initialPersistenceError: String? = nil,
+        skipsPeriodicSnapshotUntilSuccessfulPersistence: Bool = false
     ) {
         self.projects = projects
         self.columns = Self.normalized(columns)
         self.tasks = tasks
         self.persistenceURL = persistenceURL
+        self.backupConfiguration = backupConfiguration
         persistenceError = initialPersistenceError
+        self.skipsPeriodicSnapshotUntilSuccessfulPersistence = skipsPeriodicSnapshotUntilSuccessfulPersistence
     }
 
     nonisolated private static func normalized(_ columns: [BoardColumn]) -> [BoardColumn] {
@@ -185,6 +221,7 @@ final class BoardStore: ObservableObject {
             return false
         }
 
+        let preDeletionSnapshot = currentSnapshot()
         let groupedTasks = groupedTasks()
         let removedTasks = groupedTasks[id] ?? []
         let removedTaskIDs = Set(removedTasks.map(\.id))
@@ -207,7 +244,7 @@ final class BoardStore: ObservableObject {
         }
         columns.removeAll { $0.id == id }
         normalizeColumnOrder()
-        persist()
+        persist(backupBeforePersisting: preDeletionSnapshot)
         return true
     }
 
@@ -278,6 +315,8 @@ final class BoardStore: ObservableObject {
     }
 
     func deleteProject(id: Project.ID) {
+        guard projects.contains(where: { $0.id == id }) else { return }
+        let preDeletionSnapshot = currentSnapshot()
         projects.removeAll { $0.id == id }
         tasks = tasks.map { task in
             guard task.projectID == id else { return task }
@@ -288,7 +327,7 @@ final class BoardStore: ObservableObject {
         if selectedScope == .project(id) {
             selectedScope = .all
         }
-        persist()
+        persist(backupBeforePersisting: preDeletionSnapshot)
     }
 
     // MARK: - 任务变更
@@ -406,9 +445,11 @@ final class BoardStore: ObservableObject {
     }
 
     func deleteTask(id: BoardTask.ID) {
+        guard tasks.contains(where: { $0.id == id }) else { return }
+        let preDeletionSnapshot = currentSnapshot()
         tasks.removeAll { $0.id == id }
         if selectedTaskID == id { selectedTaskID = nil }
-        persist()
+        persist(backupBeforePersisting: preDeletionSnapshot)
     }
 
     // MARK: - 过滤与排序
@@ -508,16 +549,36 @@ final class BoardStore: ObservableObject {
 
     // MARK: - 持久化
 
-    private func persist() {
-        schedulePersistence(after: nil)
+    private func currentSnapshot() -> StoreSnapshot {
+        StoreSnapshot(projects: projects, columns: columns, tasks: tasks)
+    }
+
+    private func persist(backupBeforePersisting: StoreSnapshot? = nil) {
+        let destructiveBackup = registerDestructiveBackupIfNeeded(backupBeforePersisting)
+        schedulePersistence(
+            after: nil,
+            destructiveBackup: destructiveBackup,
+            backupConfiguration: backupConfiguration,
+            skipsPeriodicSnapshot: skipsPeriodicSnapshotUntilSuccessfulPersistence
+        )
     }
 
     /// 只用于高频字段编辑：在主 actor 合并 120ms 内的输入；编码和写盘始终在 utility 队列。
     private func persistDebounced() {
-        schedulePersistence(after: 0.12)
+        schedulePersistence(
+            after: 0.12,
+            destructiveBackup: pendingDestructiveBackup,
+            backupConfiguration: backupConfiguration,
+            skipsPeriodicSnapshot: skipsPeriodicSnapshotUntilSuccessfulPersistence
+        )
     }
 
-    private func schedulePersistence(after delay: TimeInterval?) {
+    private func schedulePersistence(
+        after delay: TimeInterval?,
+        destructiveBackup: PendingDestructiveBackup?,
+        backupConfiguration: BackupConfiguration,
+        skipsPeriodicSnapshot: Bool
+    ) {
         guard let persistenceURL else { return }
         pendingPersistenceTask?.cancel()
         persistenceSequence &+= 1
@@ -538,26 +599,60 @@ final class BoardStore: ObservableObject {
                       !Task.isCancelled,
                       self.persistenceSequence == sequence else { return }
                 self.pendingPersistenceTask = nil
-                self.enqueuePersistence(sequence: sequence, to: persistenceURL)
+                self.enqueuePersistence(
+                    sequence: sequence,
+                    to: persistenceURL,
+                    destructiveBackup: destructiveBackup,
+                    backupConfiguration: backupConfiguration,
+                    skipsPeriodicSnapshot: skipsPeriodicSnapshot
+                )
             }
         } else {
-            enqueuePersistence(sequence: sequence, to: persistenceURL)
+            enqueuePersistence(
+                sequence: sequence,
+                to: persistenceURL,
+                destructiveBackup: destructiveBackup,
+                backupConfiguration: backupConfiguration,
+                skipsPeriodicSnapshot: skipsPeriodicSnapshot
+            )
         }
     }
 
-    private func enqueuePersistence(sequence: Int, to url: URL) {
-        let snapshot = StoreSnapshot(projects: projects, columns: columns, tasks: tasks)
+    private func enqueuePersistence(
+        sequence: Int,
+        to url: URL,
+        destructiveBackup: PendingDestructiveBackup?,
+        backupConfiguration: BackupConfiguration,
+        skipsPeriodicSnapshot: Bool
+    ) {
+        let snapshot = currentSnapshot()
         let store = self
-        persistenceQueue.async { [snapshot, url, sequence, weak store] in
+        persistenceQueue.async { [snapshot, url, sequence, destructiveBackup, backupConfiguration, skipsPeriodicSnapshot, weak store] in
             do {
-                try Self.persist(snapshot, to: url)
+                try Self.persist(
+                    snapshot,
+                    to: url,
+                    backupBeforePersisting: destructiveBackup?.snapshot,
+                    backupConfiguration: backupConfiguration,
+                    skipsPeriodicSnapshot: skipsPeriodicSnapshot
+                )
                 Task { @MainActor [weak store] in
-                    store?.recordPersistenceResult(sequence: sequence, message: nil)
+                    store?.recordPersistenceResult(
+                        sequence: sequence,
+                        message: nil,
+                        fulfilledDestructiveBackupID: destructiveBackup?.id,
+                        skippedPeriodicSnapshot: skipsPeriodicSnapshot
+                    )
                 }
             } catch {
                 let message = error.localizedDescription
                 Task { @MainActor [weak store] in
-                    store?.recordPersistenceResult(sequence: sequence, message: message)
+                    store?.recordPersistenceResult(
+                        sequence: sequence,
+                        message: message,
+                        fulfilledDestructiveBackupID: nil,
+                        skippedPeriodicSnapshot: false
+                    )
                 }
             }
         }
@@ -572,26 +667,87 @@ final class BoardStore: ObservableObject {
         let sequence = persistenceSequence
         if !isPersistencePending { isPersistencePending = true }
         if persistenceError != nil { persistenceError = nil }
-        let snapshot = StoreSnapshot(projects: projects, columns: columns, tasks: tasks)
+        let snapshot = currentSnapshot()
+        let destructiveBackup = pendingDestructiveBackup
+        let configuration = backupConfiguration
+        let skipsPeriodicSnapshot = skipsPeriodicSnapshotUntilSuccessfulPersistence
         do {
             try persistenceQueue.sync {
-                try Self.persist(snapshot, to: persistenceURL)
+                try Self.persist(
+                    snapshot,
+                    to: persistenceURL,
+                    backupBeforePersisting: destructiveBackup?.snapshot,
+                    backupConfiguration: configuration,
+                    skipsPeriodicSnapshot: skipsPeriodicSnapshot
+                )
             }
-            recordPersistenceResult(sequence: sequence, message: nil)
+            recordPersistenceResult(
+                sequence: sequence,
+                message: nil,
+                fulfilledDestructiveBackupID: destructiveBackup?.id,
+                skippedPeriodicSnapshot: skipsPeriodicSnapshot
+            )
         } catch {
-            recordPersistenceResult(sequence: sequence, message: error.localizedDescription)
+            recordPersistenceResult(
+                sequence: sequence,
+                message: error.localizedDescription,
+                fulfilledDestructiveBackupID: nil,
+                skippedPeriodicSnapshot: false
+            )
         }
     }
 
-    private func recordPersistenceResult(sequence: Int, message: String?) {
+    func updateBackupConfiguration(_ configuration: BackupConfiguration) {
+        backupConfiguration = configuration
+    }
+
+    private func registerDestructiveBackupIfNeeded(
+        _ snapshot: StoreSnapshot?
+    ) -> PendingDestructiveBackup? {
+        guard snapshot != nil || pendingDestructiveBackup != nil else { return nil }
+        if let pendingDestructiveBackup { return pendingDestructiveBackup }
+        guard let snapshot else { return nil }
+        destructiveBackupSequence &+= 1
+        let backup = PendingDestructiveBackup(id: destructiveBackupSequence, snapshot: snapshot)
+        pendingDestructiveBackup = backup
+        return backup
+    }
+
+    private func recordPersistenceResult(
+        sequence: Int,
+        message: String?,
+        fulfilledDestructiveBackupID: Int?,
+        skippedPeriodicSnapshot: Bool
+    ) {
         guard sequence == persistenceSequence else { return }
         isPersistencePending = false
         persistenceError = message.map { "Unable to persist Boardly data: \($0)" }
-        if message == nil { persistenceSuccessRevision &+= 1 }
+        if message == nil {
+            if skippedPeriodicSnapshot {
+                skipsPeriodicSnapshotUntilSuccessfulPersistence = false
+            }
+            if let fulfilledDestructiveBackupID,
+               pendingDestructiveBackup?.id == fulfilledDestructiveBackupID {
+                pendingDestructiveBackup = nil
+            }
+            persistenceSuccessRevision &+= 1
+        }
     }
 
-    nonisolated private static func persist(_ snapshot: StoreSnapshot, to url: URL) throws {
+    nonisolated private static func persist(
+        _ snapshot: StoreSnapshot,
+        to url: URL,
+        backupBeforePersisting: StoreSnapshot? = nil,
+        backupConfiguration: BackupConfiguration,
+        skipsPeriodicSnapshot: Bool
+    ) throws {
         let data = try JSONEncoder().encode(snapshot)
+        try writeAutomaticBackupBeforePersisting(
+            backupBeforePersisting,
+            existingPersistenceURL: url,
+            backupConfiguration: backupConfiguration,
+            skipsPeriodicSnapshot: skipsPeriodicSnapshot
+        )
         try writeSnapshot(data, to: url)
     }
 
@@ -601,6 +757,184 @@ final class BoardStore: ObservableObject {
             withIntermediateDirectories: true
         )
         try data.write(to: url, options: .atomic)
+    }
+
+    /// 删除等破坏性变更会传入变更前快照；其他保存则每天最多备份一次当前磁盘版本。
+    /// 备份无法创建时拒绝覆盖主数据，避免把唯一可恢复版本静默丢掉。
+    nonisolated private static func writeAutomaticBackupBeforePersisting(
+        _ backupBeforePersisting: StoreSnapshot?,
+        existingPersistenceURL: URL,
+        backupConfiguration: BackupConfiguration,
+        skipsPeriodicSnapshot: Bool,
+        now: Date = .now
+    ) throws {
+        if let backupBeforePersisting {
+            let data = try JSONEncoder().encode(backupBeforePersisting)
+            try writeAutomaticBackup(
+                data,
+                for: existingPersistenceURL,
+                backupConfiguration: backupConfiguration,
+                now: now
+            )
+            return
+        }
+
+        guard !skipsPeriodicSnapshot,
+              backupConfiguration.isPeriodicSnapshotsEnabled else { return }
+        guard FileManager.default.fileExists(atPath: existingPersistenceURL.path),
+              !(try hasAutomaticBackup(on: now, for: existingPersistenceURL)) else { return }
+        let data = try Data(contentsOf: existingPersistenceURL)
+        try writeAutomaticBackup(
+            data,
+            for: existingPersistenceURL,
+            backupConfiguration: backupConfiguration,
+            now: now
+        )
+    }
+
+    nonisolated private static func automaticBackupDirectory(for persistenceURL: URL) -> URL {
+        persistenceURL.deletingLastPathComponent()
+            .appendingPathComponent("backups", isDirectory: true)
+            .appendingPathComponent("auto", isDirectory: true)
+    }
+
+    nonisolated private static func hasAutomaticBackup(
+        on date: Date,
+        for persistenceURL: URL
+    ) throws -> Bool {
+        let calendar = Calendar.current
+        return try automaticBackupEntries(in: automaticBackupDirectory(for: persistenceURL))
+            .contains {
+                calendar.isDate($0.date, inSameDayAs: date)
+                    && isValidAutomaticBackup(at: $0.url)
+            }
+    }
+
+    nonisolated private static func writeAutomaticBackup(
+        _ data: Data,
+        for persistenceURL: URL,
+        backupConfiguration: BackupConfiguration,
+        now: Date
+    ) throws {
+        let directory = automaticBackupDirectory(for: persistenceURL)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let backupURL = directory.appendingPathComponent(
+            "board-\(backupTimestamp(now))-\(UUID().uuidString).json"
+        )
+        try data.write(to: backupURL, options: .atomic)
+        do {
+            let writtenData = try Data(contentsOf: backupURL)
+            guard writtenData == data else { throw BackupWriteError.verificationFailed }
+            _ = try decodeSnapshot(writtenData)
+        } catch {
+            try? FileManager.default.removeItem(at: backupURL)
+            throw error
+        }
+        // 清理失败不影响刚刚完成的安全快照，也不应阻断主数据写入。
+        try? pruneAutomaticBackups(
+            in: directory,
+            configuration: backupConfiguration,
+            now: now,
+            protecting: [backupURL.standardizedFileURL]
+        )
+    }
+
+    /// 仅管理 auto 目录中的 Boardly 自动快照；用户导出和恢复备份不在此范围内。
+    nonisolated static func pruneAutomaticBackups(
+        in directory: URL,
+        configuration: BackupConfiguration = .default,
+        now: Date = .now,
+        protecting protectedURLs: Set<URL> = []
+    ) throws {
+        let backups = try automaticBackupEntries(in: directory)
+        // 无法由当前版本解码的文件（损坏或来自更新版本）不能算作可恢复点，也不应被
+        // 自动删除。它们仍可能由修复工具或更新版本恢复。
+        let validBackups = backups.filter { isValidAutomaticBackup(at: $0.url) }
+        guard validBackups.count > BackupConfiguration.minimumLatestSnapshots else { return }
+
+        var retained = Set(validBackups.prefix(BackupConfiguration.minimumLatestSnapshots).map(\.url))
+        retained.formUnion(protectedURLs.map { $0.standardizedFileURL })
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let dailyStart = calendar.date(
+            byAdding: .day,
+            value: -(configuration.dailyRetentionDays - 1),
+            to: today
+        ) ?? .distantPast
+        var retainedDays = Set<Date>()
+        for backup in validBackups where backup.date >= dailyStart {
+            let day = calendar.startOfDay(for: backup.date)
+            if retainedDays.insert(day).inserted {
+                retained.insert(backup.url)
+            }
+        }
+
+        if configuration.monthlyRetentionMonths > 0 {
+            let month = calendar.date(
+                from: calendar.dateComponents([.year, .month], from: now)
+            ) ?? now
+            let monthlyStart = calendar.date(
+                byAdding: .month,
+                value: -(configuration.monthlyRetentionMonths - 1),
+                to: month
+            ) ?? .distantPast
+            var retainedMonths = Set<Date>()
+            for backup in validBackups where backup.date >= monthlyStart {
+                let monthStart = calendar.date(
+                    from: calendar.dateComponents([.year, .month], from: backup.date)
+                ) ?? backup.date
+                if retainedMonths.insert(monthStart).inserted {
+                    retained.insert(backup.url)
+                }
+            }
+        }
+
+        for backup in validBackups where !retained.contains(backup.url) {
+            try FileManager.default.removeItem(at: backup.url)
+        }
+    }
+
+    nonisolated private static func isValidAutomaticBackup(at url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url) else { return false }
+        return (try? decodeSnapshot(data)) != nil
+    }
+
+    nonisolated private static func automaticBackupEntries(
+        in directory: URL
+    ) throws -> [(url: URL, date: Date)] {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+        let resourceKeys: Set<URLResourceKey> = [
+            .contentModificationDateKey,
+            .creationDateKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey
+        ]
+        let normalizedDirectory = directory.standardizedFileURL
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: Array(resourceKeys),
+            options: [.skipsHiddenFiles]
+        )
+        return try urls.compactMap { url in
+            // 仅管理 auto 目录的直接普通文件。绝不跟随子项符号链接，避免清理越出目录。
+            let fileURL = url.standardizedFileURL
+            guard fileURL.deletingLastPathComponent() == normalizedDirectory,
+                  fileURL.pathExtension == "json",
+                  fileURL.lastPathComponent.hasPrefix("board-") else { return nil }
+            let values = try fileURL.resourceValues(forKeys: resourceKeys)
+            guard values.isSymbolicLink != true,
+                  values.isRegularFile == true else { return nil }
+            return (fileURL, values.contentModificationDate ?? values.creationDate ?? .distantPast)
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    nonisolated private static func backupTimestamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: date)
     }
 
     /// 解码后的快照：schemaVersion 标记来源版本，供加载侧决定是否写迁移备份。
@@ -689,10 +1023,7 @@ private struct StoreSnapshot: Codable, Sendable {
         }
         guard (1...Self.currentSchemaVersion).contains(version) else {
             // 更新的未来版本（例如降级运行旧 App）：显式拒绝，触发备份而非误覆盖。
-            throw DecodingError.dataCorrupted(.init(
-                codingPath: [CodingKeys.schemaVersion],
-                debugDescription: "board.json schemaVersion \(version) 高于本版本支持的 \(Self.currentSchemaVersion)"
-            ))
+            throw SnapshotLoadError.unsupportedFutureSchemaVersion(version)
         }
         schemaVersion = version
         if version >= 2 {
@@ -723,19 +1054,38 @@ private struct StoreSnapshot: Codable, Sendable {
 
 extension BoardStore {
     static var live: BoardStore {
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        let persistenceURL = homeDirectory
+            .appendingPathComponent(".Boardly", isDirectory: true)
+            .appendingPathComponent("board.json")
         let applicationSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first!
-        let persistenceURL = applicationSupport
+        let legacyPersistenceURL = applicationSupport
             .appendingPathComponent("Boardly", isDirectory: true)
             .appendingPathComponent("board.json")
+        return load(persistenceURL: persistenceURL, migratingFrom: legacyPersistenceURL)
+    }
+
+    /// 新位置还没有数据时，复制旧 Application Support 文件；复制完成前绝不删除旧文件。
+    /// 迁移目的地不可写时继续使用旧文件，以可用性和数据完整性优先。
+    static func load(persistenceURL: URL, migratingFrom legacyPersistenceURL: URL?) -> BoardStore {
+        guard !FileManager.default.fileExists(atPath: persistenceURL.path),
+              let legacyPersistenceURL,
+              FileManager.default.fileExists(atPath: legacyPersistenceURL.path) else {
+            return load(persistenceURL: persistenceURL)
+        }
+
+        guard copyPersistenceData(from: legacyPersistenceURL, to: persistenceURL) else {
+            return load(persistenceURL: legacyPersistenceURL)
+        }
         return load(persistenceURL: persistenceURL)
     }
 
-    /// 从磁盘加载。旧版数据升级前、以及任何解码失败（畸形/未来版本）时，
-    /// 都先把原始字节复制为旁路备份，保证真实快照永远可以找回、不会被静默覆盖。
-    /// 解码失败时以默认列 + 空集合启动（不以示例数据冒充用户数据）。
+    /// 从磁盘加载。旧版数据升级前、以及任何解码失败时，都会先把原始字节复制为旁路备份，
+    /// 保证真实快照永远可以找回、不会被静默覆盖。损坏文件以默认列 + 空集合启动；
+    /// 来自更新版本的文件则只读保护，不允许旧版应用自动覆盖。
     /// 备份写入失败时走安全失败路径：返回不绑定原文件的内存 store（persistenceURL = nil），
     /// 后续任何修改都不会落盘覆盖原 board.json。
     static func load(persistenceURL: URL) -> BoardStore {
@@ -761,7 +1111,7 @@ extension BoardStore {
         do {
             let decoded = try decodeSnapshot(data)
             if decoded.schemaVersion < StoreSnapshot.currentSchemaVersion {
-                if writeBackup(data, nextTo: persistenceURL, label: "v\(decoded.schemaVersion)-migration") == nil {
+                if writeRecoveryBackup(data, for: persistenceURL, label: "v\(decoded.schemaVersion)-migration") == nil {
                     // 备份失败：数据可用但仅存内存，绝不让首次写入覆盖未备份的原始文件。
                     return BoardStore(
                         projects: decoded.projects,
@@ -779,32 +1129,72 @@ extension BoardStore {
                 persistenceURL: persistenceURL
             )
         } catch {
-            if writeBackup(data, nextTo: persistenceURL, label: "recovery") == nil {
+            let hasFutureSchema = (error as? SnapshotLoadError).map {
+                if case .unsupportedFutureSchemaVersion = $0 { return true }
+                return false
+            } ?? false
+            let recoveryLabel = hasFutureSchema ? "future-schema" : "recovery"
+            if writeRecoveryBackup(data, for: persistenceURL, label: recoveryLabel) == nil {
                 return BoardStore(
                     persistenceURL: nil,
-                    initialPersistenceError: "无法备份损坏的数据文件；当前修改仅保存在本次运行中。"
+                    initialPersistenceError: hasFutureSchema
+                        ? "无法备份来自更新版本的数据文件；当前修改仅保存在本次运行中。"
+                        : "无法备份损坏的数据文件；当前修改仅保存在本次运行中。"
                 )
             }
-            return BoardStore(persistenceURL: persistenceURL)
+            if hasFutureSchema {
+                return BoardStore(
+                    persistenceURL: nil,
+                    initialPersistenceError: "数据文件来自更新版本；已保留 recovery 备份，当前修改仅保存在本次运行中。"
+                )
+            }
+            return BoardStore(
+                persistenceURL: persistenceURL,
+                skipsPeriodicSnapshotUntilSuccessfulPersistence: true
+            )
         }
     }
 
-    /// 把原始字节复制为 `board.json.<label>.backup`；recovery 备份附 UUID 避免覆盖历史备份。
+    /// 把原始字节放入不参与自动清理的 recovery 目录，迁移与损坏恢复均不会互相覆盖。
     /// 返回备份文件 URL；失败返回 nil，由调用方决定安全失败路径。
     @discardableResult
-    nonisolated static func writeBackup(_ data: Data, nextTo url: URL, label: String) -> URL? {
-        let unique = label == "recovery" ? "-\(UUID().uuidString)" : ""
-        let backupURL = url.deletingLastPathComponent()
-            .appendingPathComponent("\(url.lastPathComponent).\(label)\(unique).backup")
+    nonisolated static func writeRecoveryBackup(_ data: Data, for url: URL, label: String) -> URL? {
+        let recoveryDirectory = url.deletingLastPathComponent()
+            .appendingPathComponent("backups", isDirectory: true)
+            .appendingPathComponent("recovery", isDirectory: true)
+        let backupURL = recoveryDirectory.appendingPathComponent(
+            "board-\(backupTimestamp(.now))-\(label)-\(UUID().uuidString).json"
+        )
         do {
             try FileManager.default.createDirectory(
-                at: backupURL.deletingLastPathComponent(),
+                at: recoveryDirectory,
                 withIntermediateDirectories: true
             )
             try data.write(to: backupURL, options: .atomic)
+            guard try Data(contentsOf: backupURL) == data else {
+                try? FileManager.default.removeItem(at: backupURL)
+                return nil
+            }
             return backupURL
         } catch {
+            try? FileManager.default.removeItem(at: backupURL)
             return nil
+        }
+    }
+
+    nonisolated private static func copyPersistenceData(from sourceURL: URL, to destinationURL: URL) -> Bool {
+        guard let data = try? Data(contentsOf: sourceURL) else { return false }
+        do {
+            try writeSnapshot(data, to: destinationURL)
+            guard try Data(contentsOf: destinationURL) == data else {
+                try? FileManager.default.removeItem(at: destinationURL)
+                return false
+            }
+            return true
+        } catch {
+            // 目标文件仅是本次生成的副本，清理它不会影响旧数据。
+            try? FileManager.default.removeItem(at: destinationURL)
+            return false
         }
     }
 
