@@ -16,6 +16,10 @@ final class BoardlySettingsTests: XCTestCase {
         XCTAssertTrue(settings.showTaskNotes)
         XCTAssertTrue(settings.showTaskMetadata)
         XCTAssertEqual(settings.cardDensity, .standard)
+        XCTAssertTrue(settings.periodicSnapshotsEnabled)
+        XCTAssertEqual(settings.backupDailyRetention, .oneMonth)
+        XCTAssertEqual(settings.backupMonthlyRetention, .oneYear)
+        XCTAssertEqual(settings.backupConfiguration, .default)
     }
 
     func testChangesPersistAndPresetUpdatesScale() {
@@ -26,6 +30,9 @@ final class BoardlySettingsTests: XCTestCase {
         settings.showTaskNotes = false
         settings.showTaskMetadata = false
         settings.cardDensity = .compact
+        settings.periodicSnapshotsEnabled = false
+        settings.backupDailyRetention = .oneWeek
+        settings.backupMonthlyRetention = .threeMonths
 
         let reloaded = BoardlySettings(defaults: defaults)
         XCTAssertEqual(reloaded.fontSizePreset, .large)
@@ -33,6 +40,9 @@ final class BoardlySettingsTests: XCTestCase {
         XCTAssertFalse(reloaded.showTaskNotes)
         XCTAssertFalse(reloaded.showTaskMetadata)
         XCTAssertEqual(reloaded.cardDensity, .compact)
+        XCTAssertFalse(reloaded.periodicSnapshotsEnabled)
+        XCTAssertEqual(reloaded.backupDailyRetention, .oneWeek)
+        XCTAssertEqual(reloaded.backupMonthlyRetention, .threeMonths)
 
         settings.fontScale = 1.07
         let smoothScale = BoardlySettings(defaults: defaults)
@@ -45,6 +55,9 @@ final class BoardlySettingsTests: XCTestCase {
         settings.showTaskNotes = false
         settings.showTaskMetadata = false
         settings.cardDensity = .spacious
+        settings.periodicSnapshotsEnabled = false
+        settings.backupDailyRetention = .oneYear
+        settings.backupMonthlyRetention = .none
 
         settings.resetToDefaults()
 
@@ -52,5 +65,27 @@ final class BoardlySettingsTests: XCTestCase {
         XCTAssertTrue(settings.showTaskNotes)
         XCTAssertTrue(settings.showTaskMetadata)
         XCTAssertEqual(settings.cardDensity, .standard)
+        XCTAssertTrue(settings.periodicSnapshotsEnabled)
+        XCTAssertEqual(settings.backupDailyRetention, .oneMonth)
+        XCTAssertEqual(settings.backupMonthlyRetention, .oneYear)
+    }
+
+    func testInvalidStoredBackupRetentionUsesSafeDefaults() {
+        let defaults = makeDefaults()
+        defaults.set(-1, forKey: "boardly.settings.backupDailyRetention")
+        defaults.set(999, forKey: "boardly.settings.backupMonthlyRetention")
+
+        let settings = BoardlySettings(defaults: defaults)
+
+        XCTAssertEqual(settings.backupDailyRetention, .oneMonth)
+        XCTAssertEqual(settings.backupMonthlyRetention, .oneYear)
+        XCTAssertEqual(
+            BackupConfiguration(
+                isPeriodicSnapshotsEnabled: true,
+                dailyRetentionDays: -5,
+                monthlyRetentionMonths: -5
+            ).dailyRetentionDays,
+            1
+        )
     }
 }

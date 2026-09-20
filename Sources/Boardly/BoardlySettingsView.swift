@@ -75,12 +75,49 @@ struct BoardlySettingsView: View {
                             .toggleStyle(.switch)
                     }
 
+                    BoardlyFormSection("数据备份") {
+                        Toggle("在普通保存时创建每日快照", isOn: $settings.periodicSnapshotsEnabled)
+                            .toggleStyle(.switch)
+                            .accessibilityHint("关闭后仍会在删除任务、项目或列前创建安全快照")
+
+                        if settings.periodicSnapshotsEnabled {
+                            BoardlyFormRow(label: "每日快照保留") {
+                                Picker("每日快照保留", selection: $settings.backupDailyRetention) {
+                                    ForEach(BoardlySettings.BackupDailyRetention.allCases) { retention in
+                                        Text(retention.title).tag(retention)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .labelsHidden()
+                            }
+                        }
+
+                        BoardlyFormRow(label: "每月快照保留") {
+                            Picker("每月快照保留", selection: $settings.backupMonthlyRetention) {
+                                ForEach(BoardlySettings.BackupMonthlyRetention.allCases) { retention in
+                                    Text(retention.title).tag(retention)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                        }
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("自动快照位置：~/.Boardly/backups/auto")
+                                .boardlyFont(.caption, monospacedDigits: true)
+                                .foregroundStyle(.secondary)
+                            Text("始终至少保留最近 3 份；删除前安全快照不受每日开关影响。迁移和恢复备份不会自动清理。")
+                                .boardlyFont(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     Button("恢复默认设置") {
                         settings.resetToDefaults()
                     }
                     .buttonStyle(BoardlySecondaryButtonStyle())
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityHint("将字体、卡片密度和显示选项恢复为默认值")
+                    .accessibilityHint("将字体、卡片密度、显示选项和备份策略恢复为默认值")
                 }
                 .padding(16)
             }

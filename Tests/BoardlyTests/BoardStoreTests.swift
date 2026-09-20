@@ -342,7 +342,10 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(store.tasks.first?.columnID, DefaultColumns.todoID)
         XCTAssertEqual(try Data(contentsOf: fileURL), originalData, "加载阶段不得改写原文件")
 
-        let backupURL = dir.appendingPathComponent("board.json.v1-migration.backup")
+        let backups = try recoveryBackupURLs(in: dir)
+            .filter { $0.lastPathComponent.contains("-v1-migration-") }
+        let backupURL = try XCTUnwrap(backups.first, "迁移前必须保留原始字节备份")
+        XCTAssertEqual(backups.count, 1)
         XCTAssertEqual(try Data(contentsOf: backupURL), originalData, "迁移前必须保留原始字节备份")
     }
 
@@ -363,10 +366,71 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertTrue(store.projects.isEmpty)
         XCTAssertEqual(try Data(contentsOf: fileURL), corruptData, "加载阶段不得覆盖原文件")
 
-        let backups = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-            .filter { $0.lastPathComponent.hasPrefix("board.json.recovery-") }
+        let backups = try recoveryBackupURLs(in: dir)
+            .filter { $0.lastPathComponent.contains("-recovery-") }
         XCTAssertEqual(backups.count, 1, "必须写入 recovery 备份")
-        XCTAssertEqual(try Data(contentsOf: backups[0]), corruptData, "备份必须保留原始字节")
+        XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(backups.first)), corruptData, "备份必须保留原始字节")
+    }
+
+    /// recovery 已校验完成后，损坏文件不应让首次写入反复卡在“普通备份必须可解码”的校验上。
+    func testCorruptLoadCanPersistNewDataAfterVerifiedRecoveryBackup() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = dir.appendingPathComponent("board.json")
+        let corruptData = Data("{ this is not json".utf8)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try corruptData.write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = BoardStore.load(persistenceURL: fileURL)
+        let newTaskID = try XCTUnwrap(
+            store.addTask(
+                title: "恢复后的新任务",
+                notes: "",
+                columnID: DefaultColumns.todoID,
+                priority: .medium,
+                projectID: nil,
+                dueDate: nil
+            )
+        )
+        store.flushPersistence()
+
+        XCTAssertNil(store.persistenceError)
+        XCTAssertTrue(
+            try BoardStore.decodeSnapshot(Data(contentsOf: fileURL)).tasks.contains(where: { $0.id == newTaskID }),
+            "recovery 已成功写入后，新的干净数据应能替换损坏主文件"
+        )
+        let recovery = try XCTUnwrap(
+            try recoveryBackupURLs(in: dir).first(where: { $0.lastPathComponent.contains("-recovery-") })
+        )
+        XCTAssertEqual(try Data(contentsOf: recovery), corruptData, "覆盖前的损坏原始字节必须留在 recovery")
+    }
+
+    /// 未来 schema 不能被当前旧版本自动覆盖；即使 recovery 已成功，也必须保持只读保护。
+    func testFutureSchemaLoadNeverOverwritesOriginalFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = dir.appendingPathComponent("board.json")
+        let futureData = Data(#"{"schemaVersion": 99, "projects": [], "columns": [], "tasks": []}"#.utf8)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try futureData.write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = BoardStore.load(persistenceURL: fileURL)
+        XCTAssertNotNil(store.persistenceError, "未来 schema 应明确进入只读保护")
+        _ = store.addTask(
+            title: "不能覆盖未来版本",
+            notes: "",
+            columnID: DefaultColumns.todoID,
+            priority: .medium,
+            projectID: nil,
+            dueDate: nil
+        )
+        store.flushPersistence()
+
+        XCTAssertEqual(try Data(contentsOf: fileURL), futureData)
+        let recovery = try XCTUnwrap(
+            try recoveryBackupURLs(in: dir).first(where: { $0.lastPathComponent.contains("-future-schema-") })
+        )
+        XCTAssertEqual(try Data(contentsOf: recovery), futureData)
     }
 
     /// 备份写入失败（目录不可写）时必须走安全失败路径：返回不绑定原文件的内存 store，
@@ -389,10 +453,12 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertNotNil(cleanStore.persistenceError, "备份失败后不得误报所有更改已保存")
         cleanStore.addTask(title: "不应落盘", notes: "", columnID: DefaultColumns.todoID, priority: .medium, projectID: nil, dueDate: nil)
         XCTAssertEqual(try Data(contentsOf: corruptURL), corruptData, "内存 store 的修改不得写回未备份的原文件")
-        XCTAssertTrue(
-            try FileManager.default.contentsOfDirectory(at: corruptDir, includingPropertiesForKeys: nil)
-                .filter { $0.lastPathComponent.hasPrefix("board.json.") && $0.lastPathComponent.hasSuffix(".backup") }
-                .isEmpty,
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: corruptDir
+                    .appendingPathComponent("backups/recovery", isDirectory: true)
+                    .path
+            ),
             "备份失败时不应留下任何备份文件"
         )
 
@@ -416,6 +482,314 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertNotNil(memoryStore.persistenceError, "迁移备份失败后不得误报所有更改已保存")
         memoryStore.addColumn(name: "也不应落盘", symbol: "circle", colorName: "blue")
         XCTAssertEqual(try Data(contentsOf: legacyURL), legacyData, "备份失败的迁移不得让后续写入覆盖原 v1 文件")
+    }
+
+    func testLegacyApplicationSupportDataIsCopiedToDotBoardlyWithoutDeletingSource() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let legacyURL = root
+            .appendingPathComponent("Library/Application Support/Boardly", isDirectory: true)
+            .appendingPathComponent("board.json")
+        let persistenceURL = root
+            .appendingPathComponent(".Boardly", isDirectory: true)
+            .appendingPathComponent("board.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let task = BoardTask(title: "保留旧位置", columnID: DefaultColumns.todoID)
+        let originalData = try JSONEncoder().encode(
+            StoreSnapshotEncodable(projects: [], columns: DefaultColumns.makeDefaults(), tasks: [task])
+        )
+        try FileManager.default.createDirectory(
+            at: legacyURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try originalData.write(to: legacyURL)
+
+        let store = BoardStore.load(persistenceURL: persistenceURL, migratingFrom: legacyURL)
+
+        XCTAssertEqual(store.tasks.map(\.id), [task.id])
+        XCTAssertEqual(try Data(contentsOf: persistenceURL), originalData, "新位置必须是原始字节副本")
+        XCTAssertEqual(try Data(contentsOf: legacyURL), originalData, "旧位置不得在迁移时删除或修改")
+    }
+
+    func testMigrationCopyFailureContinuesUsingLegacyDataWithoutDeletingIt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let legacyURL = root.appendingPathComponent("legacy/board.json")
+        let blockedParent = root.appendingPathComponent("blocked-parent")
+        let persistenceURL = blockedParent.appendingPathComponent("board.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let task = BoardTask(title: "旧数据仍可用", columnID: DefaultColumns.todoID)
+        let originalData = try JSONEncoder().encode(
+            StoreSnapshotEncodable(projects: [], columns: DefaultColumns.makeDefaults(), tasks: [task])
+        )
+        try FileManager.default.createDirectory(
+            at: legacyURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try originalData.write(to: legacyURL)
+        try Data("not a directory".utf8).write(to: blockedParent)
+
+        let store = BoardStore.load(persistenceURL: persistenceURL, migratingFrom: legacyURL)
+
+        XCTAssertEqual(store.tasks.map(\.id), [task.id])
+        XCTAssertEqual(try Data(contentsOf: legacyURL), originalData)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: persistenceURL.path))
+    }
+
+    func testDeleteTaskWritesAutomaticSnapshotBeforeRemovingTask() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("board.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let task = BoardTask(title: "不能丢失", columnID: DefaultColumns.todoID)
+        let store = BoardStore(tasks: [task], persistenceURL: fileURL)
+        store.flushPersistence()
+
+        store.deleteTask(id: task.id)
+        store.flushPersistence()
+
+        XCTAssertTrue(store.tasks.isEmpty)
+        let backupURL = try XCTUnwrap(
+            try automaticBackupURLs(
+                in: directory.appendingPathComponent("backups/auto", isDirectory: true)
+            ).first
+        )
+        let backup = try BoardStore.decodeSnapshot(Data(contentsOf: backupURL))
+        XCTAssertEqual(backup.tasks.map(\.id), [task.id], "删除前版本必须可从自动快照恢复")
+    }
+
+    func testDeleteProjectWritesAutomaticSnapshotBeforeRemovingProject() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("board.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let project = Project(name: "待删除项目", symbol: "folder", colorName: "blue")
+        let task = BoardTask(title: "项目任务", columnID: DefaultColumns.todoID, projectID: project.id)
+        let store = BoardStore(projects: [project], tasks: [task], persistenceURL: fileURL)
+        store.flushPersistence()
+
+        store.deleteProject(id: project.id)
+        store.flushPersistence()
+
+        let backupURL = try XCTUnwrap(
+            try automaticBackupURLs(
+                in: directory.appendingPathComponent("backups/auto", isDirectory: true)
+            ).first
+        )
+        let backup = try BoardStore.decodeSnapshot(Data(contentsOf: backupURL))
+        XCTAssertEqual(backup.projects.map(\.id), [project.id])
+        XCTAssertEqual(backup.tasks.first?.projectID, project.id)
+    }
+
+    func testDeleteColumnWritesAutomaticSnapshotBeforeMovingTasks() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("board.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let task = BoardTask(title: "列中任务", columnID: DefaultColumns.backlogID)
+        let store = BoardStore(tasks: [task], persistenceURL: fileURL)
+        store.flushPersistence()
+
+        XCTAssertTrue(
+            store.deleteColumn(id: DefaultColumns.backlogID, migratingTasksTo: DefaultColumns.todoID)
+        )
+        store.flushPersistence()
+
+        let backupURL = try XCTUnwrap(
+            try automaticBackupURLs(
+                in: directory.appendingPathComponent("backups/auto", isDirectory: true)
+            ).first
+        )
+        let backup = try BoardStore.decodeSnapshot(Data(contentsOf: backupURL))
+        XCTAssertTrue(backup.columns.contains(where: { $0.id == DefaultColumns.backlogID }))
+        XCTAssertEqual(backup.tasks.first?.columnID, DefaultColumns.backlogID)
+    }
+
+    func testFailedDestructiveBackupBlocksLaterWritesUntilTheSnapshotSucceeds() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("board.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let originalTask = BoardTask(title: "必须保住", columnID: DefaultColumns.todoID)
+        let store = BoardStore(tasks: [originalTask], persistenceURL: fileURL)
+        store.flushPersistence()
+
+        let blockedBackupRoot = directory.appendingPathComponent("backups")
+        try Data("not a directory".utf8).write(to: blockedBackupRoot)
+
+        store.deleteTask(id: originalTask.id)
+        store.flushPersistence()
+        XCTAssertNotNil(store.persistenceError)
+        XCTAssertEqual(
+            try BoardStore.decodeSnapshot(Data(contentsOf: fileURL)).tasks.map(\.id),
+            [originalTask.id],
+            "删除前快照失败时不得覆盖主数据"
+        )
+
+        _ = store.addTask(
+            title: "后续编辑也不能绕过保护",
+            notes: "",
+            columnID: DefaultColumns.todoID,
+            priority: .medium,
+            projectID: nil,
+            dueDate: nil
+        )
+        store.flushPersistence()
+        XCTAssertEqual(
+            try BoardStore.decodeSnapshot(Data(contentsOf: fileURL)).tasks.map(\.id),
+            [originalTask.id],
+            "待保护快照未成功前，任何后续保存都不得写入删除结果"
+        )
+
+        try FileManager.default.removeItem(at: blockedBackupRoot)
+        store.flushPersistence()
+
+        XCTAssertNil(store.persistenceError)
+        let backups = try automaticBackupURLs(
+            in: directory.appendingPathComponent("backups/auto", isDirectory: true)
+        )
+        let backup = try BoardStore.decodeSnapshot(Data(contentsOf: try XCTUnwrap(backups.first)))
+        XCTAssertEqual(backup.tasks.map(\.id), [originalTask.id])
+        XCTAssertFalse(
+            try BoardStore.decodeSnapshot(Data(contentsOf: fileURL)).tasks.contains(where: { $0.id == originalTask.id })
+        )
+    }
+
+    func testDeleteSafetySnapshotRemainsEnabledWhenPeriodicSnapshotsAreDisabled() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("board.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let task = BoardTask(title: "安全快照", columnID: DefaultColumns.todoID)
+        let store = BoardStore(
+            tasks: [task],
+            persistenceURL: fileURL,
+            backupConfiguration: BackupConfiguration(isPeriodicSnapshotsEnabled: false)
+        )
+        store.flushPersistence()
+
+        store.deleteTask(id: task.id)
+        store.flushPersistence()
+
+        let backupURL = try XCTUnwrap(
+            try automaticBackupURLs(
+                in: directory.appendingPathComponent("backups/auto", isDirectory: true)
+            ).first
+        )
+        let backup = try BoardStore.decodeSnapshot(Data(contentsOf: backupURL))
+        XCTAssertEqual(backup.tasks.map(\.id), [task.id])
+    }
+
+    func testAutomaticBackupRetentionKeepsLatestSnapshotsAfterLongGap() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = testDate(year: 2026, month: 9, day: 20)
+        let dates = [
+            testDate(year: 2025, month: 1, day: 5),
+            testDate(year: 2025, month: 1, day: 4),
+            testDate(year: 2025, month: 1, day: 3),
+            testDate(year: 2025, month: 1, day: 2),
+            testDate(year: 2025, month: 1, day: 1)
+        ]
+        let urls = try dates.map { try writeAutomaticBackupFixture(in: directory, date: $0) }
+
+        try BoardStore.pruneAutomaticBackups(in: directory, now: now)
+
+        XCTAssertEqual(
+            Set(try automaticBackupURLs(in: directory).map(\.lastPathComponent)),
+            Set(urls.prefix(3).map(\.lastPathComponent))
+        )
+    }
+
+    func testAutomaticBackupRetentionKeepsRecentMonthlySnapshots() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = testDate(year: 2026, month: 9, day: 20)
+        let recent = [
+            testDate(year: 2026, month: 9, day: 19),
+            testDate(year: 2026, month: 9, day: 18),
+            testDate(year: 2026, month: 9, day: 17),
+            testDate(year: 2026, month: 8, day: 10),
+            testDate(year: 2026, month: 7, day: 10),
+            testDate(year: 2026, month: 6, day: 10)
+        ]
+        let expected = try recent.map { try writeAutomaticBackupFixture(in: directory, date: $0) }
+        _ = try writeAutomaticBackupFixture(in: directory, date: testDate(year: 2025, month: 9, day: 10))
+
+        try BoardStore.pruneAutomaticBackups(in: directory, now: now)
+
+        XCTAssertEqual(
+            Set(try automaticBackupURLs(in: directory).map(\.lastPathComponent)),
+            Set(expected.map(\.lastPathComponent))
+        )
+    }
+
+    func testAutomaticBackupRetentionCountsOnlyDecodableSnapshots() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = testDate(year: 2026, month: 9, day: 20)
+        let validURLs = try [
+            testDate(year: 2025, month: 1, day: 5),
+            testDate(year: 2025, month: 1, day: 4),
+            testDate(year: 2025, month: 1, day: 3),
+            testDate(year: 2025, month: 1, day: 2)
+        ].map { try writeAutomaticBackupFixture(in: directory, date: $0) }
+        let invalidURLs = try [
+            testDate(year: 2025, month: 1, day: 8),
+            testDate(year: 2025, month: 1, day: 7),
+            testDate(year: 2025, month: 1, day: 6)
+        ].map { try writeInvalidAutomaticBackupFixture(in: directory, date: $0) }
+
+        try BoardStore.pruneAutomaticBackups(in: directory, now: now)
+
+        let remaining = try automaticBackupURLs(in: directory)
+        let validRemaining = remaining.filter { url in
+            guard let data = try? Data(contentsOf: url) else { return false }
+            return (try? BoardStore.decodeSnapshot(data)) != nil
+        }
+        XCTAssertEqual(
+            Set(validRemaining.map(\.lastPathComponent)),
+            Set(validURLs.prefix(3).map(\.lastPathComponent)),
+            "损坏快照不能占用最近三个可恢复点的安全名额"
+        )
+        XCTAssertTrue(
+            Set(invalidURLs.map(\.lastPathComponent)).isSubset(of: Set(remaining.map(\.lastPathComponent))),
+            "无法由当前版本解码的旧快照不得被自动删除"
+        )
+    }
+
+    func testAutomaticBackupPruningNeverFollowsSymbolicLinks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let directory = root.appendingPathComponent("auto", isDirectory: true)
+        let externalURL = root
+            .appendingPathComponent("outside", isDirectory: true)
+            .appendingPathComponent("board-external.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = testDate(year: 2026, month: 9, day: 20)
+        let regularURLs = try [
+            testDate(year: 2025, month: 1, day: 5),
+            testDate(year: 2025, month: 1, day: 4),
+            testDate(year: 2025, month: 1, day: 3),
+            testDate(year: 2025, month: 1, day: 2)
+        ].map { try writeAutomaticBackupFixture(in: directory, date: $0) }
+        let externalData = try validAutomaticBackupData()
+        try FileManager.default.createDirectory(
+            at: externalURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try externalData.write(to: externalURL)
+        try FileManager.default.setAttributes(
+            [.modificationDate: testDate(year: 2025, month: 1, day: 1)],
+            ofItemAtPath: externalURL.path
+        )
+        let symlinkURL = directory.appendingPathComponent("board-link.json")
+        try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: externalURL)
+
+        try BoardStore.pruneAutomaticBackups(in: directory, now: now)
+
+        XCTAssertEqual(try Data(contentsOf: externalURL), externalData, "清理不得删除 auto 目录外的符号链接目标")
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: symlinkURL.path), externalURL.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: regularURLs.last!.path), "仍应正常清理目录内过期快照")
     }
 
     // MARK: - 列 CRUD 与排序
@@ -878,6 +1252,48 @@ private struct StoreSnapshotEncodable: Encodable {
 
 private func orderedColumnNames(of columns: [BoardColumn]) -> [String] {
     columns.sorted { $0.sortOrder < $1.sortOrder }.map(\.name)
+}
+
+private func recoveryBackupURLs(in persistenceDirectory: URL) throws -> [URL] {
+    let directory = persistenceDirectory.appendingPathComponent("backups/recovery", isDirectory: true)
+    return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+}
+
+private func automaticBackupURLs(in directory: URL) throws -> [URL] {
+    try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        .filter { $0.pathExtension == "json" && $0.lastPathComponent.hasPrefix("board-") }
+}
+
+private func writeAutomaticBackupFixture(in directory: URL, date: Date) throws -> URL {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appendingPathComponent("board-\(UUID().uuidString).json")
+    try validAutomaticBackupData().write(to: url)
+    try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+    return url
+}
+
+private func writeInvalidAutomaticBackupFixture(in directory: URL, date: Date) throws -> URL {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appendingPathComponent("board-invalid-\(UUID().uuidString).json")
+    try Data("not a Boardly snapshot".utf8).write(to: url)
+    try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+    return url
+}
+
+private func validAutomaticBackupData() throws -> Data {
+    try JSONEncoder().encode(
+        StoreSnapshotEncodable(
+            projects: [],
+            columns: DefaultColumns.makeDefaults(),
+            tasks: []
+        )
+    )
+}
+
+private func testDate(year: Int, month: Int, day: Int) -> Date {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    return calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12))!
 }
 
 private extension Array where Element == BoardColumn {
