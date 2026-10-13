@@ -42,6 +42,7 @@ enum BoardlyTheme {
 #if canImport(AppKit)
     /// 标题栏/工具栏的 AppKit 对应令牌：用于窗口级 chrome（titlebar 透明 +
     /// 窗口背景），确保 SwiftUI 工具栏与窗口标题栏颜色一致。
+    static let scrollerNSColor = NSColor(red: 105 / 255, green: 101 / 255, blue: 130 / 255, alpha: 0.7)
     static let toolbarNSColor = NSColor(red: 24 / 255, green: 24 / 255, blue: 29 / 255, alpha: 1)
 #endif
 
@@ -449,29 +450,33 @@ struct BoardlySheetHeader: View {
 
 // MARK: - 统一滚动条主题
 
+/// 只收窄绘制，不缩小原生拖动热区；AppKit 继续管理 overlay 淡出。
 private final class BoardlyScroller: NSScroller {
-    private let trackColor = NSColor(calibratedWhite: 1, alpha: 0.06)
-    private let knobColor = NSColor(calibratedRed: 117 / 255, green: 103 / 255, blue: 248 / 255, alpha: 0.82)
+    override class var isCompatibleWithOverlayScrollers: Bool { true }
 
-    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
-        guard scrollerStyle == .legacy else { return }
-        trackColor.setFill()
-        NSBezierPath(roundedRect: slotRect.insetBy(dx: 2, dy: 2), xRadius: 4, yRadius: 4).fill()
+    override func draw(_ dirtyRect: NSRect) {
+        drawKnob()
     }
+
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
 
     override func drawKnob() {
         guard isEnabled else { return }
-        let knobRect = rect(for: .knob).insetBy(dx: 2, dy: 2)
+        var knobRect = rect(for: .knob)
         guard !knobRect.isEmpty else { return }
-        knobColor.setFill()
-        NSBezierPath(roundedRect: knobRect, xRadius: 4, yRadius: 4).fill()
+        if bounds.height > bounds.width {
+            knobRect = NSRect(x: knobRect.midX - 2, y: knobRect.minY + 2,
+                              width: 4, height: max(0, knobRect.height - 4))
+        } else {
+            knobRect = NSRect(x: knobRect.minX + 2, y: knobRect.midY - 2,
+                              width: max(0, knobRect.width - 4), height: 4)
+        }
+        BoardlyTheme.scrollerNSColor.setFill()
+        NSBezierPath(roundedRect: knobRect, xRadius: 2, yRadius: 2).fill()
     }
 }
 
-/// 全应用滚动容器主题：定位最近的宿主 NSScrollView 及其嵌套容器，
-/// 把普通横/纵 scroller 切到 overlay 样式并使用主题色。
-/// TextEditor 同样使用主题滑块，但保留 AppKit 的自动隐藏行为，
-/// 避免无溢出时出现禁用的满高滑块。
+/// 使用细灰紫滑块，保留原生淡出、拖动与系统显示偏好。
 private struct BoardlyScrollerThemer: NSViewRepresentable {
     final class Coordinator {
         var didTheme = false
@@ -536,28 +541,14 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
     }
 
     private static func theme(scrollView: NSScrollView) {
-        let isTextEditor = scrollView.documentView is NSTextView
-        if isTextEditor {
-            scrollView.autohidesScrollers = true
-        }
-
-        // 统一使用不占内容空间的 overlay；TextEditor 在自身挂载主题器，
-        // 避免依赖父级扫描导致系统灰色滑块漏网。
-        if scrollView.scrollerStyle != .overlay {
-            scrollView.scrollerStyle = .overlay
-        }
-        let darkAppearance = NSAppearance(named: .vibrantDark)
-
+        scrollView.autohidesScrollers = true
         if scrollView.hasVerticalScroller, !(scrollView.verticalScroller is BoardlyScroller) {
-            let scroller = BoardlyScroller(frame: scrollView.verticalScroller?.frame ?? .zero)
-            scroller.appearance = darkAppearance
-            scrollView.verticalScroller = scroller
+            scrollView.verticalScroller = BoardlyScroller(frame: scrollView.verticalScroller?.frame ?? .zero)
         }
         if scrollView.hasHorizontalScroller, !(scrollView.horizontalScroller is BoardlyScroller) {
-            let scroller = BoardlyScroller(frame: scrollView.horizontalScroller?.frame ?? .zero)
-            scroller.appearance = darkAppearance
-            scrollView.horizontalScroller = scroller
+            scrollView.horizontalScroller = BoardlyScroller(frame: scrollView.horizontalScroller?.frame ?? .zero)
         }
+        scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
     }
 
     private static func descendantScrollViews(of view: NSView) -> [NSScrollView] {
@@ -584,7 +575,7 @@ private struct BoardlyScrollerThemer: NSViewRepresentable {
 }
 
 extension View {
-    /// 统一 Boardly 深色主题滚动条（overlay 样式 + accent 滑块着色）。
+    /// 使用适合深色背景的细灰紫滚动条，遵循系统显示偏好。
     /// 应用于 ScrollView/Form 内容的 background，不影响布局与命中测试。
     func boardlyScrollers() -> some View {
         background(BoardlyScrollerThemer())
