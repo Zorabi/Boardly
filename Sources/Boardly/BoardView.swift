@@ -56,7 +56,7 @@ struct BoardView: View {
                             }
                             .padding(boardPadding)
                         }
-                        .scrollIndicators(.visible)
+                        .scrollIndicators(.automatic)
                         .boardlyScrollers()
                         .background(BoardlyTheme.canvas)
                     }
