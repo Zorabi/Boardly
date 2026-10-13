@@ -14,6 +14,8 @@ struct BoardView: View {
     @State private var draggedTask: BoardTask?
     @State private var directDragLocation: CGPoint?
 
+    private let boardPadding: CGFloat = 16
+
     private func visibleTasksByColumn(for columns: [BoardColumn]) -> [BoardColumn.ID: [BoardTask]] {
         var grouped: [BoardColumn.ID: [BoardTask]] = [:]
         for column in columns {
@@ -31,31 +33,33 @@ struct BoardView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ZStack(alignment: .topLeading) {
-                    ScrollView(.horizontal) {
-                        LazyHStack(alignment: .top, spacing: 12) {
-                            ForEach(orderedColumns) { column in
-                                TaskColumnView(
-                                    column: column,
-                                    tasks: tasksByColumn[column.id] ?? [],
-                                    onCreateTask: onCreateTask,
-                                    onRename: { editingColumn = column },
-                                    onDelete: { deletingColumn = column },
-                                    directlyDraggedTaskID: $directlyDraggedTaskID,
-                                    directDragLocation: $directDragLocation,
-                                    onDirectDragBegan: { draggedTask = $0 },
-                                    onDirectDragEnded: handleDirectDragEnded
-                                )
-                                .frame(width: 280)
-                                .containerRelativeFrame(.vertical)
-                            }
+                    GeometryReader { geometry in
+                        ScrollView(.horizontal) {
+                            LazyHStack(alignment: .top, spacing: 12) {
+                                ForEach(orderedColumns) { column in
+                                    TaskColumnView(
+                                        column: column,
+                                        tasks: tasksByColumn[column.id] ?? [],
+                                        onCreateTask: onCreateTask,
+                                        onRename: { editingColumn = column },
+                                        onDelete: { deletingColumn = column },
+                                        directlyDraggedTaskID: $directlyDraggedTaskID,
+                                        directDragLocation: $directDragLocation,
+                                        onDirectDragBegan: { draggedTask = $0 },
+                                        onDirectDragEnded: handleDirectDragEnded
+                                    )
+                                    // 使用看板实际可见高度，避免嵌套滚动容器按内容撑高列。
+                                    .frame(width: 280, height: max(0, geometry.size.height - boardPadding * 2))
+                                }
 
-                            addColumnPanel
+                                addColumnPanel
+                            }
+                            .padding(boardPadding)
                         }
-                        .padding(16)
+                        .scrollIndicators(.visible)
+                        .boardlyScrollers()
+                        .background(BoardlyTheme.canvas)
                     }
-                    .scrollIndicators(.visible)
-                    .boardlyScrollers()
-                    .background(BoardlyTheme.canvas)
 
                     if let draggedTask, let directDragLocation {
                         TaskCardDragPreview(task: draggedTask)
