@@ -1,149 +1,133 @@
-<div align="center">
-
 # Boardly
 
-一款原生、离线优先的 macOS 个人任务看板。
+Boardly 是一款 macOS 个人任务看板，支持按项目组织任务、自定义工作流，并将数据保存在本机。
 
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white)](https://github.com/Zorabi/Boardly)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white)](Package.swift)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](Package.swift)
-[![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0D96F6)](Sources/Boardly)
-[![GNU AGPL v3.0](https://img.shields.io/badge/License-AGPL--3.0-2F855A)](LICENSE)
-
-</div>
-
-Boardly 使用 SwiftUI 构建，为个人任务提供项目分类、自定义工作流、拖放排序、带草稿保护的任务详情和本地持久化。应用无需账号或网络服务，数据保存在当前 Mac 上。
-
-> [!NOTE]
-> Boardly 目前处于可运行的原型阶段，尚未提供签名安装包或自动更新。请通过 SwiftPM 运行，或使用仓库脚本生成本地 `.app`。
-
-## 界面预览
-
-![Boardly 主看板，包含项目侧边栏、搜索和五列任务工作流](docs/images/boardly-board.png)
-
-<p align="center">
-  <img src="docs/images/boardly-inspector.png" alt="任务详情 Inspector" width="49%">
-  <img src="docs/images/boardly-settings.png" alt="看板显示设置" width="49%">
-</p>
-
-<p align="center"><sub>截图使用应用内置示例数据，不包含真实个人任务。</sub></p>
+[![AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-2F855A)](LICENSE)
 
 ## 功能
 
-- **自定义工作流**：新增、编辑、排序和删除看板列，并为列设置图标、颜色和完成语义。
-- **任务管理**：记录标题、描述、优先级、项目、截止日期和标签；支持列内排序、跨列拖放与移动菜单。
-- **安全编辑**：任务详情使用草稿和显式保存；关闭存在未保存修改的详情时会先确认，避免误操作丢失内容。
-- **聚焦视图**：按项目、未分类、今天或所有任务查看看板，并可从工具栏搜索任务。
-- **原生 macOS 体验**：SwiftUI 侧栏与看板布局、独立右侧 Inspector、系统字体、SF Symbols 和键盘操作。
-- **项目与列管理**：可创建项目并设置图标和颜色，也可从看板末尾添加自定义状态列。
-- **显示偏好**：在独立设置面板中调整字号、卡片密度，以及任务描述和元数据的显示方式。
-- **可靠持久化**：已确认的修改会在后台串行写入本地 JSON；删除任务、项目或列前会创建自动快照，侧栏仅在保存中、短暂保存成功或失败时显示状态，旧版迁移和损坏数据恢复前会保留原始备份。
-- **辅助功能**：支持 VoiceOver 文案、键盘入口和“减弱动态效果”设置。
+- **项目与工作流**：创建项目，自定义项目图标和颜色；新增、编辑、排序和删除看板列。
+- **任务管理**：设置标题、说明、优先级、项目、截止日期和标签，通过拖放或菜单移动任务。
+- **筛选与搜索**：查看所有任务、今天、未分类或指定项目的任务，使用工具栏搜索任务。
+- **草稿编辑**：在右侧详情面板编辑任务，确认保存后生效；关闭未保存的修改时提示确认。
+- **显示设置**：调整字号、卡片密度，以及任务说明和元数据的显示方式。
+- **本地保存与备份**：自动保存已确认的修改，创建每日快照，并在删除任务、项目或列前创建安全快照。
 
-## 使用说明
+## 界面预览
 
-- 单击任务卡片可打开右侧详情。编辑先保留在草稿中，选择“保存”或按 <kbd>Return</kbd> 后才会更新任务。
-- 详情存在未保存修改时，关闭按钮或 <kbd>Esc</kbd> 会显示放弃确认；没有修改时会直接关闭。
-- 设置与任务详情共用右侧 Inspector，但状态彼此独立；按 <kbd>Esc</kbd> 只关闭当前面板。
-- 任务、项目和列的已确认修改会自动写入磁盘，无需额外执行文件保存操作。保存成功提示会短暂出现后自动隐藏，写入失败则持续提示。
+主看板展示项目分类、自定义状态列和任务卡片，截图使用示例数据。
 
-## 快速开始
+![Boardly 主看板：左侧项目分类，右侧按工作流排列的任务卡片](docs/images/boardly-board.png)
+
+## 安装与快速开始
 
 ### 环境要求
 
-- macOS 14 Sonoma 或更高版本
-- Swift 6 toolchain
-- Xcode Command Line Tools
+| 项目 | 要求 |
+| --- | --- |
+| 操作系统 | macOS 14 Sonoma 或更高版本 |
+| 构建工具 | Swift 6 工具链、Xcode Command Line Tools |
+| 依赖 | 无第三方 Swift Package 依赖 |
 
-项目不依赖第三方 Swift Package。
+应用使用 SwiftUI，当前界面采用深色主题。使用时无需账号或网络服务。
 
 ### 从源码运行
 
-```bash
-git clone https://github.com/Zorabi/Boardly.git
-cd Boardly
-swift run
-```
+1. 克隆仓库并进入项目目录：
 
-也可以先构建，再运行调试版二进制：
+   ```bash
+   git clone https://github.com/Zorabi/Boardly.git
+   cd Boardly
+   ```
 
-```bash
-swift build
-.build/debug/Boardly
-```
+2. 构建并运行：
 
-### 生成 macOS 应用
+   ```bash
+   swift run Boardly
+   ```
 
-```bash
-bash Sources/Boardly/Resources/make-app.sh
-open build/Boardly.app
-```
+### 安装到“应用程序”
 
-脚本会执行 Release 构建、生成应用图标，并输出 `build/Boardly.app`。生成结果使用 ad-hoc 签名，仅适合本地开发和体验，不是经过 Developer ID 签名与公证的发行包。
+1. 在项目根目录生成应用：
 
-如需安装到当前 Mac，请先退出正在运行的 Boardly，再执行：
+   ```bash
+   bash Sources/Boardly/Resources/make-app.sh
+   ```
 
-```bash
-ditto build/Boardly.app /Applications/Boardly.app
-open /Applications/Boardly.app
-```
+   构建结果位于 `build/Boardly.app`，可直接打开体验。
 
-## 快捷键
+2. 退出正在运行的 Boardly，再安装并启动：
+
+   ```bash
+   ditto build/Boardly.app /Applications/Boardly.app
+   open /Applications/Boardly.app
+   ```
+
+## 使用说明
+
+1. 从侧边栏选择任务范围，或通过“新建项目”添加项目。
+2. 使用工具栏的加号新建任务；列标题上的加号可直接在该列创建任务。
+3. 拖动任务卡片调整顺序或移动到其他列，通过列菜单管理工作流。
+4. 单击卡片打开任务详情，编辑后选择“保存”；若放弃修改，使用“取消”并按提示确认。
+5. 打开工具栏设置，调整显示方式与自动快照保留期。设置修改立即生效。
+
+### 快捷键
 
 | 操作 | 快捷键 |
 | --- | --- |
-| 新建任务 | <kbd>⌘</kbd> <kbd>N</kbd> |
-| 打开或关闭看板设置 | <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>I</kbd> |
-| 关闭任务详情或弹窗 | <kbd>Esc</kbd> |
-| 保存任务详情或确认表单 | <kbd>Return</kbd> |
+| 新建任务 | `⌘N` |
+| 打开或关闭看板设置 | `⌥⌘I` |
+| 取消表单或关闭当前面板 | `Esc` |
+| 保存任务详情或确认表单 | `Return` |
 
-## 数据与隐私
+任务详情存在未保存修改时，取消或关闭会先提示确认。
 
-Boardly 不包含账号、在线同步、遥测或后台服务。
+### 数据与备份
+
+项目、列和任务在修改确认后自动保存，写入失败时会显示提示。首次运行且没有已有数据时，应用会载入示例任务。
 
 | 数据 | 保存位置 |
 | --- | --- |
 | 项目、列和任务 | `~/.Boardly/board.json` |
-| 字号、卡片密度等显示偏好 | macOS `UserDefaults` |
-| 自动滚动快照 | `~/.Boardly/backups/auto/*.json` |
-| 迁移与恢复备份 | `~/.Boardly/backups/recovery/*.json` |
+| 显示与备份偏好 | macOS 偏好设置 |
+| 自动快照 | `~/.Boardly/backups/auto/` |
+| 数据恢复备份 | `~/.Boardly/backups/recovery/` |
 
-首次启动且不存在 `board.json` 时，Boardly 会载入一组示例项目和任务；若发现旧位置 `~/Library/Application Support/Boardly/board.json`，会先复制并校验到 `~/.Boardly`，保留旧文件不删除。当前数据格式为 schema v2，并兼容旧版 `status` 字段。
+默认在普通保存时每天创建一份自动快照，删除前另外创建安全快照。可在设置中调整每日和每月快照保留期，或关闭普通保存的每日快照；删除前的安全快照仍会保留。
 
-读取到损坏文件时，原始字节会先写入 `recovery`，随后才允许保存新的干净数据；若文件来自更新版本的 schema，当前旧版本会保持只读保护，绝不自动覆盖原文件。
-
-默认情况下，普通保存每天会保留一份自动快照；删除任务、项目或列前始终额外创建安全快照。可在“看板设置”中关闭普通保存的每日快照，并设置每日保留期（7 / 30 / 90 / 365 天）和每月保留期（不保留 / 3 / 12 / 24 个月）；无论设置如何，始终保留最近 3 份可恢复快照。迁移、损坏恢复、无法由当前版本解码的快照和其他目录中的文件不参与自动清理。
+应用不提供账号、在线同步或遥测。手动备份时，请先退出应用，再复制整个 `~/.Boardly` 目录。
 
 ## 开发与测试
 
-运行全部测试：
+在项目根目录执行：
 
 ```bash
+swift build
 swift test
 ```
 
-测试覆盖数据解码与迁移、自定义列、任务移动与排序、任务详情保存、异步持久化状态、备份恢复，以及显示设置持久化。
+测试涉及任务移动与排序、自定义列、任务详情保存、本地持久化、备份策略和偏好设置。
 
-主要目录：
-
-```text
-Sources/Boardly/           应用源码与打包资源
-Tests/BoardlyTests/        单元测试
-docs/images/               README 截图
-docs/PRODUCT_DESIGN.md     产品与交互设计
-design-system/todos-mac/   macOS 视觉规范
-```
-
-进一步了解设计与实现约束：
-
-- [产品与交互设计](docs/PRODUCT_DESIGN.md)
-- [macOS 视觉规范](design-system/todos-mac/MASTER.md)
+| 路径 | 内容 |
+| --- | --- |
+| `Sources/Boardly/` | 应用源码与资源 |
+| `Tests/BoardlyTests/` | 单元测试 |
+| `docs/images/` | 界面截图 |
+| [产品与交互设计](docs/PRODUCT_DESIGN.md) | 产品设计参考 |
+| [macOS 视觉规范](design-system/todos-mac/MASTER.md) | 界面设计参考 |
 
 ## 贡献
 
-欢迎提交 [Issue](https://github.com/Zorabi/Boardly/issues) 或 Pull Request。提交代码前请运行 `swift test`；涉及界面调整时，建议附上变更前后的截图。
+通过 [Issue](https://github.com/Zorabi/Boardly/issues) 报告问题或提出建议。报告问题时请附上 macOS 版本、复现步骤、预期行为和实际结果。
 
-## License
+提交 Pull Request 前请运行 `swift test`；界面修改请附上截图，并说明验证过的交互。
+
+## 许可证
+
+SPDX：`AGPL-3.0-only`。
 
 Copyright (c) 2026 dongx。
 
-Boardly 基于 [GNU Affero General Public License v3.0](LICENSE)（SPDX: `AGPL-3.0-only`）发布。
+本项目基于 [GNU Affero General Public License v3.0](LICENSE) 发布。
