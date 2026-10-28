@@ -1,5 +1,16 @@
 import SwiftUI
 
+struct BoardlyOpenSettingsKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    var boardlyOpenSettings: (() -> Void)? {
+        get { self[BoardlyOpenSettingsKey.self] }
+        set { self[BoardlyOpenSettingsKey.self] = newValue }
+    }
+}
+
 /// 窗口级 chrome 配置：标题栏透明化并以 Theme 的 toolbar 语义表面作为窗口背景，
 /// 与 SwiftUI 的 toolbarBackground 着色互为兜底，消除默认浅灰标题条。
 /// 交通灯、窗口拖动、工具栏按钮与搜索框全部保留原生行为。
@@ -72,11 +83,18 @@ struct BoardWorkspaceView: View {
         .inspector(isPresented: $isInspectorPresented) {
             inspectorContent
                 .inspectorColumnWidth(min: 280, ideal: 320, max: 420)
+                // 只让原生检查器执行展开/收起，避免表单内部同时插值和淡入。
+                .transaction { transaction in
+                    transaction.animation = nil
+                }
         }
         .sheet(item: $newTaskContext) { context in
             NewTaskSheet(initialColumnID: context.columnID)
                 .environmentObject(store)
         }
+        .focusedSceneValue(\.boardlyOpenSettings, {
+            openSettings()
+        })
         .onChange(of: store.selectedTaskID) { _, selectedTaskID in
             guard let selectedTaskID else {
                 // 列删除会迁移并清除原列的选中任务；详情检查器也应随之关闭，
@@ -115,7 +133,7 @@ struct BoardWorkspaceView: View {
         }
         .buttonStyle(BoardlyPlainButtonStyle())
         .keyboardShortcut("i", modifiers: [.command, .option])
-        .help(settingsIsOpen ? "关闭看板设置 (⌥⌘I)" : "打开看板设置 (⌥⌘I)")
+        .help(settingsIsOpen ? "关闭看板设置 (⌥⌘I)" : "打开看板设置 (⌘, 或 ⌥⌘I)")
         .accessibilityLabel(settingsIsOpen ? "关闭看板设置" : "打开看板设置")
         .accessibilityValue(settingsIsOpen ? "已打开" : "已关闭")
     }
@@ -124,21 +142,33 @@ struct BoardWorkspaceView: View {
         if settingsIsOpen {
             closeInspector()
         } else {
-            isSettingsPresented = true
-            presentInspector()
+            openSettings()
         }
     }
 
+    private func openSettings() {
+        guard !settingsIsOpen else { return }
+        isSettingsPresented = true
+        presentInspector()
+    }
+
     private func closeInspector() {
-        store.selectedTaskID = nil
         setInspectorPresented(false)
+        if store.selectedTaskID != nil {
+            store.selectedTaskID = nil
+        }
     }
 
     private func setInspectorPresented(_ isPresented: Bool) {
+        guard isInspectorPresented != isPresented else { return }
         if reduceMotion {
-            isInspectorPresented = isPresented
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                isInspectorPresented = isPresented
+            }
         } else {
-            withAnimation(isPresented ? .easeOut(duration: 0.12) : .easeIn(duration: 0.08)) {
+            withAnimation(.easeOut(duration: 0.16)) {
                 isInspectorPresented = isPresented
             }
         }

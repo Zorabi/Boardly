@@ -33,5 +33,22 @@ struct BoardlyApp: App {
                 }
         }
         .defaultSize(width: 1_280, height: 780)
+        .commands {
+            BoardlySettingsCommands()
+        }
+    }
+}
+
+private struct BoardlySettingsCommands: Commands {
+    @FocusedValue(\.boardlyOpenSettings) private var openSettings
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("设置…") {
+                openSettings?()
+            }
+            .keyboardShortcut(",", modifiers: .command)
+            .disabled(openSettings == nil)
+        }
     }
 }
