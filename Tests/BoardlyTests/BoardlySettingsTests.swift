@@ -8,6 +8,21 @@ final class BoardlySettingsTests: XCTestCase {
         return UserDefaults(suiteName: suiteName)!
     }
 
+    func testLegacyPreferencesMigrationPreservesExistingSettings() {
+        let defaults = makeDefaults()
+        defaults.set(true, forKey: "boardly.settings.showTaskNotes")
+        BoardlySettings.migrateLegacyPreferences(to: defaults, legacyPreferences: [
+            "boardly.settings.fontScale": 1.15,
+            "boardly.settings.showTaskNotes": false,
+            "unrelated.setting": "ignored"
+        ])
+
+        let settings = BoardlySettings(defaults: defaults)
+        XCTAssertEqual(settings.fontScale, 1.15, accuracy: 0.001)
+        XCTAssertTrue(settings.showTaskNotes)
+        XCTAssertNil(defaults.object(forKey: "unrelated.setting"))
+    }
+
     func testDefaultsAreReadableAndUseful() {
         let settings = BoardlySettings(defaults: makeDefaults())
 

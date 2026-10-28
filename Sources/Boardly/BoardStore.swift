@@ -39,7 +39,7 @@ final class BoardStore: ObservableObject {
     private let persistenceURL: URL?
     /// 所有编码与写盘都在同一串行队列完成，因此后提交的快照绝不会被更早的快照覆盖。
     private let persistenceQueue = DispatchQueue(
-        label: "dev.boardly.persistence",
+        label: "dongx.boardly.persistence",
         qos: .utility
     )
     private var pendingPersistenceTask: Task<Void, Never>?
