@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct NewTaskSheet: View {
+    private let sheetWidth: CGFloat = 480
+    private let horizontalPadding: CGFloat = 20
     @EnvironmentObject private var store: BoardStore
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
@@ -58,6 +60,8 @@ struct NewTaskSheet: View {
                             }
                             .pickerStyle(.menu)
                             .labelsHidden()
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(width: 200, alignment: .leading)
                         }
                         BoardlyFormRow(label: "优先级") {
                             Picker("优先级", selection: $priority) {
@@ -69,6 +73,7 @@ struct NewTaskSheet: View {
                             }
                             .pickerStyle(.segmented)
                             .labelsHidden()
+                            .frame(width: 200, alignment: .leading)
                         }
                         BoardlyFormRow(label: "项目") {
                             Picker("项目", selection: $projectID) {
@@ -80,6 +85,8 @@ struct NewTaskSheet: View {
                             }
                             .pickerStyle(.menu)
                             .labelsHidden()
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(width: 200, alignment: .leading)
                         }
                         BoardlyFormRow(label: "截止") {
                             Toggle("设置截止日期", isOn: $hasDueDate)
@@ -102,7 +109,9 @@ struct NewTaskSheet: View {
                             .accessibilityLabel("无法添加任务：\(submissionError)")
                     }
                 }
-                .padding(.horizontal, 20)
+                // 限制滚动内容宽度，避免组织控件的固有宽度撑开整个表单。
+                .frame(width: sheetWidth - horizontalPadding * 2, alignment: .leading)
+                .padding(.horizontal, horizontalPadding)
                 .padding(.bottom, 8)
             }
             .boardlyScrollers()
@@ -121,7 +130,7 @@ struct NewTaskSheet: View {
             }
             .padding(16)
         }
-        .frame(width: 480, height: 560)
+        .frame(width: sheetWidth, height: 560)
         .onAppear {
             if !store.columns.contains(where: { $0.id == columnID }) {
                 columnID = store.orderedColumns.first?.id
