@@ -144,6 +144,6 @@ design-system/todos-mac/   macOS 视觉规范
 
 ## License
 
-Copyright (c) 2026 Boardly contributors。
+Copyright (c) 2026 dongx。
 
 Boardly 基于 [GNU Affero General Public License v3.0](LICENSE)（SPDX: `AGPL-3.0-only`）发布。

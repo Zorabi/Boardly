@@ -27,7 +27,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key>
     <string>Boardly</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.boardly.app</string>
+    <string>dongx.boardly</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 dongx</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>

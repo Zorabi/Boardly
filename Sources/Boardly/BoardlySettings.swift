@@ -160,7 +160,24 @@ final class BoardlySettings: ObservableObject {
         didSet { defaults.set(backupMonthlyRetention.rawValue, forKey: Key.backupMonthlyRetention) }
     }
 
+    /// 只补充新域中缺失的应用设置，保留旧域和用户已有的新设置。
+    static func migrateLegacyPreferences(
+        to defaults: UserDefaults,
+        legacyPreferences: [String: Any]
+    ) {
+        for (key, value) in legacyPreferences
+        where key.hasPrefix("boardly.settings.") && defaults.object(forKey: key) == nil {
+            defaults.set(value, forKey: key)
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
+        if defaults === UserDefaults.standard, Bundle.main.bundleIdentifier == "dongx.boardly" {
+            Self.migrateLegacyPreferences(
+                to: defaults,
+                legacyPreferences: defaults.persistentDomain(forName: "dev.boardly.app") ?? [:]
+            )
+        }
         self.defaults = defaults
 
         let savedScale = defaults.object(forKey: Key.fontScale) as? Double ?? FontSizePreset.standard.scale
