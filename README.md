@@ -7,7 +7,7 @@
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white)](https://github.com/Zorabi/Boardly)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](Package.swift)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0D96F6)](Sources/Boardly)
-[![MIT License](https://img.shields.io/badge/License-MIT-2F855A)](LICENSE)
+[![GNU AGPL v3.0](https://img.shields.io/badge/License-AGPL--3.0-2F855A)](LICENSE)
 
 </div>
 
@@ -144,4 +144,6 @@ design-system/todos-mac/   macOS 视觉规范
 
 ## License
 
-Boardly 基于 [MIT License](LICENSE) 发布。
+Copyright (c) 2026 Boardly contributors。
+
+Boardly 基于 [GNU Affero General Public License v3.0](LICENSE)（SPDX: `AGPL-3.0-only`）发布。
