@@ -34,6 +34,25 @@ struct BoardlyWindowChrome: NSViewRepresentable {
         if window.backgroundColor?.isEqual(BoardlyTheme.toolbarNSColor) != true {
             window.backgroundColor = BoardlyTheme.toolbarNSColor
         }
+        // searchable 的工具栏输入框由 AppKit 绘制，SwiftUI 的焦点效果修饰器
+        // 无法替代其原生焦点环。只关闭搜索框的外圈，保留输入边界与编辑行为。
+        for item in window.toolbar?.items ?? [] {
+            if let searchItem = item as? NSSearchToolbarItem {
+                searchItem.searchField.focusRingType = .none
+            }
+            if let itemView = item.view {
+                configureSearchFields(in: itemView)
+            }
+        }
+    }
+
+    private static func configureSearchFields(in view: NSView) {
+        if let searchField = view as? NSSearchField {
+            searchField.focusRingType = .none
+        }
+        for child in view.subviews {
+            configureSearchFields(in: child)
+        }
     }
 }
 
@@ -62,6 +81,9 @@ struct BoardWorkspaceView: View {
                 newTaskContext = NewTaskContext(columnID: columnID)
             }
             .navigationTitle(store.selectedScopeTitle)
+            .overlay(alignment: .trailing) {
+                floatingInspector
+            }
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "搜索任务")
         .toolbar {
@@ -76,17 +98,10 @@ struct BoardWorkspaceView: View {
                 } label: {
                     Label("新建任务", systemImage: "plus")
                 }
+                .boardlyControlFocus()
                 .keyboardShortcut("n", modifiers: .command)
                 .help("新建任务 (⌘N)")
             }
-        }
-        .inspector(isPresented: $isInspectorPresented) {
-            inspectorContent
-                .inspectorColumnWidth(min: 280, ideal: 320, max: 420)
-                // 只让原生检查器执行展开/收起，避免表单内部同时插值和淡入。
-                .transaction { transaction in
-                    transaction.animation = nil
-                }
         }
         .sheet(item: $newTaskContext) { context in
             NewTaskSheet(initialColumnID: context.columnID)
@@ -114,6 +129,20 @@ struct BoardWorkspaceView: View {
         isSettingsPresented && isInspectorPresented
     }
 
+    @ViewBuilder
+    private var floatingInspector: some View {
+        if isInspectorPresented {
+            inspectorContent
+                .frame(width: 320)
+                .frame(maxHeight: .infinity)
+                .background(BoardlyTheme.canvas)
+                .clipped()
+                .shadow(color: .black.opacity(0.24), radius: 16, x: -4, y: 4)
+                .transition(reduceMotion ? .identity : .offset(x: 24).combined(with: .opacity))
+                .zIndex(1)
+        }
+    }
+
     /// 全局设置入口固定在标题栏右侧，避免在看板内容区占用一整行。
     /// 保留文字、图标和状态色，确保它既容易发现，也能明确表达开关状态。
     private var settingsButton: some View {
@@ -132,6 +161,7 @@ struct BoardWorkspaceView: View {
             )
         }
         .buttonStyle(BoardlyPlainButtonStyle())
+        .boardlyControlFocus()
         .keyboardShortcut("i", modifiers: [.command, .option])
         .help(settingsIsOpen ? "关闭看板设置 (⌥⌘I)" : "打开看板设置 (⌘, 或 ⌥⌘I)")
         .accessibilityLabel(settingsIsOpen ? "关闭看板设置" : "打开看板设置")
@@ -168,7 +198,11 @@ struct BoardWorkspaceView: View {
                 isInspectorPresented = isPresented
             }
         } else {
-            withAnimation(.easeOut(duration: 0.16)) {
+            // 仅移动悬浮面板，不改变看板的可用宽度。
+            let animation: Animation = isPresented
+                ? .easeOut(duration: 0.20)
+                : .easeOut(duration: 0.16)
+            withAnimation(animation) {
                 isInspectorPresented = isPresented
             }
         }

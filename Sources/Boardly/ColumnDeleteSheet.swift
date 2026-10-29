@@ -87,9 +87,11 @@ struct ColumnDeleteSheet: View {
                 Spacer()
                 Button("取消") { dismiss() }
                     .buttonStyle(BoardlySecondaryButtonStyle())
+                    .boardlyControlFocus()
                     .keyboardShortcut(.cancelAction)
                 Button("删除列", role: .destructive) { delete() }
                     .buttonStyle(BoardlyDestructiveButtonStyle())
+                    .boardlyControlFocus()
                     .disabled(!canDelete)
             }
             .padding(16)
@@ -123,18 +125,10 @@ struct ColumnDeleteSheet: View {
                 RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusField, style: .continuous)
                     .fill(migrationTargetID == target.id ? BoardlyTheme.selectedCard : BoardlyTheme.field)
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusField, style: .continuous)
-                    .strokeBorder(
-                        migrationTargetID == target.id ? BoardlyTheme.selectedBorder.opacity(0.6) : BoardlyTheme.border
-                    )
-            }
             .contentShape(RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusField, style: .continuous))
         }
         .buttonStyle(BoardlyPlainButtonStyle())
-        // 迁移行是可键盘访问的 Button；关闭 macOS 默认的焦点环，
-        // 保留这里已有的选中背景与勾选图标作为状态反馈。
-        .focusEffectDisabled()
+        .boardlyControlFocus()
         .accessibilityLabel("迁移到\(target.name)")
         .accessibilityAddTraits(migrationTargetID == target.id ? .isSelected : [])
     }

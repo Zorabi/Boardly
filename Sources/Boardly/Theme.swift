@@ -174,6 +174,41 @@ extension View {
     }
 }
 
+// MARK: - 非输入控件的交互反馈
+
+/// 只附着到已有的原生控件：不新增焦点目标、不改变 Tab 顺序或控件尺寸。
+/// 状态色层不接收鼠标事件，输入控件不使用此修饰器。
+private struct BoardlyControlFocusModifier: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+    @FocusState private var isFocused: Bool
+    @State private var isHovering = false
+
+    private var feedbackOpacity: Double {
+        guard isEnabled else { return 0 }
+        if isFocused { return 0.14 }
+        return isHovering ? 0.06 : 0
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .focused($isFocused)
+            .focusEffectDisabled()
+            .onHover { isHovering = $0 }
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.primary.opacity(feedbackOpacity))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+    }
+}
+
+extension View {
+    func boardlyControlFocus() -> some View {
+        modifier(BoardlyControlFocusModifier())
+    }
+}
+
 // MARK: - 按钮样式
 
 /// 主操作按钮：强调色填充，每个界面只保留一个。
@@ -195,7 +230,7 @@ struct BoardlyPrimaryButtonStyle: ButtonStyle {
     }
 }
 
-/// 次要按钮：低调表面 + 细边框。
+/// 次要按钮：低调表面，以背景深浅区分按下状态。
 struct BoardlySecondaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
@@ -207,12 +242,8 @@ struct BoardlySecondaryButtonStyle: ButtonStyle {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(configuration.isPressed ? 0.10 : 0.05))
+                    .fill(Color.primary.opacity(configuration.isPressed ? 0.10 : 0.05))
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(isEnabled ? BoardlyTheme.border : BoardlyTheme.border.opacity(0.5))
-            }
             .focusEffectDisabled()
     }
 }
@@ -225,11 +256,11 @@ struct BoardlyIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .boardlySystemFont(size: 12, weight: .medium)
-            .foregroundStyle(isEnabled ? Color.secondary : Color(white: 0.35))
+            .foregroundStyle(isEnabled ? Color.secondary : Color.secondary.opacity(0.45))
             .frame(width: size, height: size)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(configuration.isPressed ? Color.white.opacity(0.12) : Color.white.opacity(0.06))
+                    .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : 0.06))
             )
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .focusEffectDisabled()
@@ -250,10 +281,6 @@ struct BoardlyDestructiveButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(BoardlyTheme.danger.opacity(configuration.isPressed ? 0.18 : 0.10))
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(BoardlyTheme.danger.opacity(isEnabled ? 0.35 : 0.15))
-            }
             .focusEffectDisabled()
     }
 }
@@ -261,9 +288,11 @@ struct BoardlyDestructiveButtonStyle: ButtonStyle {
 /// 无系统焦点外框的轻量按钮：保留键盘焦点语义，但避免点击后留下高亮边框。
 /// 适用于颜色色板、侧栏次要入口和看板空状态等自定义命中区域。
 struct BoardlyPlainButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .opacity(configuration.isPressed ? 0.78 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.45)
             .focusEffectDisabled()
     }
 }

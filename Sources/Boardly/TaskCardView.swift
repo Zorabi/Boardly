@@ -53,7 +53,7 @@ struct TaskCardView: View {
                 .strokeBorder(
                     isDropTarget
                         ? BoardlyTheme.selectedBorder
-                        : (isSelected ? BoardlyTheme.selectedBorder.opacity(0.7) : BoardlyTheme.border),
+                        : BoardlyTheme.border,
                     lineWidth: isDropTarget ? 2 : 1
                 )
         }
@@ -147,9 +147,12 @@ struct TaskCardView: View {
                 .frame(width: 24, height: 20)
                 .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
+        // 使用普通按钮承载菜单，避免弹出式菜单为指示箭头预留非对称空间。
+        .menuStyle(.button)
+        .buttonStyle(BoardlyPlainButtonStyle())
         .menuIndicator(.hidden)
-        .focusEffectDisabled()
+        .frame(width: 24, height: 20)
+        .boardlyControlFocus()
         .accessibilityLabel("移动任务菜单")
         .accessibilityHint("打开后可将任务移动到任意列，无需拖放。")
     }

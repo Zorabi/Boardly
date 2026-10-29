@@ -56,6 +56,7 @@ struct TaskInspectorView: View {
                             }
                             .pickerStyle(.menu)
                             .labelsHidden()
+                            .boardlyControlFocus()
                         }
                         BoardlyFormRow(label: "优先级") {
                             Picker("优先级", selection: $draft.priority) {
@@ -67,6 +68,7 @@ struct TaskInspectorView: View {
                             }
                             .pickerStyle(.segmented)
                             .labelsHidden()
+                            .boardlyControlFocus()
                         }
                         BoardlyFormRow(label: "项目") {
                             Picker("项目", selection: $draft.projectID) {
@@ -78,12 +80,14 @@ struct TaskInspectorView: View {
                             }
                             .pickerStyle(.menu)
                             .labelsHidden()
+                            .boardlyControlFocus()
                         }
                     }
 
                     BoardlyFormSection("日期") {
                         BoardlyFormRow(label: "截止") {
                             Toggle("设置截止日期", isOn: dueDateEnabled)
+                                .boardlyControlFocus()
                         }
                         if draft.dueDate != nil {
                             DatePicker(
@@ -107,6 +111,7 @@ struct TaskInspectorView: View {
 
                     Button("删除任务", role: .destructive, action: onDelete)
                         .buttonStyle(BoardlyDestructiveButtonStyle())
+                        .boardlyControlFocus()
                         .padding(.top, 4)
                         .accessibilityHint("删除后无法撤销")
                 }
@@ -126,9 +131,11 @@ struct TaskInspectorView: View {
                 Spacer()
                 Button("取消", action: requestClose)
                     .buttonStyle(BoardlySecondaryButtonStyle())
+                    .boardlyControlFocus()
                     .keyboardShortcut(.cancelAction)
                 Button("保存", action: save)
                     .buttonStyle(BoardlyPrimaryButtonStyle())
+                    .boardlyControlFocus()
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSave)
             }
@@ -155,6 +162,7 @@ struct TaskInspectorView: View {
                 Image(systemName: "xmark")
             }
             .buttonStyle(BoardlyIconButtonStyle())
+            .boardlyControlFocus()
             .accessibilityLabel("关闭任务详情")
         }
         .padding(16)
