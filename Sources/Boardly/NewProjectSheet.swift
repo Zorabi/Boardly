@@ -42,6 +42,7 @@ struct NewProjectSheet: View {
                             }
                             .pickerStyle(.menu)
                             .labelsHidden()
+                            .boardlyControlFocus()
                         }
 
                         BoardlyFormRow(label: "颜色", alignment: .top, labelTopPadding: 7) {
@@ -68,9 +69,11 @@ struct NewProjectSheet: View {
                 Spacer()
                 Button("取消") { dismiss() }
                     .buttonStyle(BoardlySecondaryButtonStyle())
+                    .boardlyControlFocus()
                     .keyboardShortcut(.cancelAction)
                 Button("创建项目") { createProject() }
                     .buttonStyle(BoardlyPrimaryButtonStyle())
+                    .boardlyControlFocus()
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSubmit)
             }
@@ -88,8 +91,10 @@ struct NewProjectSheet: View {
                     .fill(option.color)
                     .frame(width: 22, height: 22)
                 if colorName == option.name {
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.9), lineWidth: 2)
+                    Image(systemName: "checkmark")
+                        .boardlySystemFont(size: 11, weight: .bold)
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.7), radius: 1)
                         .frame(width: 22, height: 22)
                 }
             }
@@ -97,6 +102,7 @@ struct NewProjectSheet: View {
             .contentShape(Circle())
         }
         .buttonStyle(BoardlyPlainButtonStyle())
+        .boardlyControlFocus()
         .accessibilityLabel(option.title)
         .accessibilityAddTraits(colorName == option.name ? .isSelected : [])
     }

@@ -32,10 +32,13 @@ struct SidebarView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(BoardlyPlainButtonStyle())
+                .boardlyControlFocus()
                 .accessibilityHint("打开新建项目表单")
             }
         }
         .listStyle(.sidebar)
+        // 保留原生行选择与方向键导航，仅隐藏列表外围的焦点环。
+        .focusEffectDisabled()
         .scrollContentBackground(.hidden)
         .background(BoardlyTheme.sidebar)
         .navigationTitle("Boardly")

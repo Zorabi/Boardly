@@ -60,6 +60,7 @@ struct NewTaskSheet: View {
                             }
                             .pickerStyle(.menu)
                             .labelsHidden()
+                            .boardlyControlFocus()
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(width: 200, alignment: .leading)
                         }
@@ -73,6 +74,7 @@ struct NewTaskSheet: View {
                             }
                             .pickerStyle(.segmented)
                             .labelsHidden()
+                            .boardlyControlFocus()
                             .frame(width: 200, alignment: .leading)
                         }
                         BoardlyFormRow(label: "项目") {
@@ -85,11 +87,13 @@ struct NewTaskSheet: View {
                             }
                             .pickerStyle(.menu)
                             .labelsHidden()
+                            .boardlyControlFocus()
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(width: 200, alignment: .leading)
                         }
                         BoardlyFormRow(label: "截止") {
                             Toggle("设置截止日期", isOn: $hasDueDate)
+                                .boardlyControlFocus()
                         }
                         if hasDueDate {
                             DatePicker(
@@ -122,9 +126,11 @@ struct NewTaskSheet: View {
                 Spacer()
                 Button("取消") { dismiss() }
                     .buttonStyle(BoardlySecondaryButtonStyle())
+                    .boardlyControlFocus()
                     .keyboardShortcut(.cancelAction)
                 Button("添加任务") { submit() }
                     .buttonStyle(BoardlyPrimaryButtonStyle())
+                    .boardlyControlFocus()
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSubmit)
             }

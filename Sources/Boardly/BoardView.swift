@@ -135,12 +135,9 @@ struct BoardView: View {
                 RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous)
                     .fill(BoardlyTheme.column.opacity(0.5))
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: BoardlyTheme.cornerRadiusColumn, style: .continuous)
-                    .strokeBorder(BoardlyTheme.border, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-            }
         }
         .buttonStyle(BoardlyPlainButtonStyle())
+        .boardlyControlFocus()
         .help("新增看板列")
         .accessibilityLabel("新增看板列")
         .accessibilityHint("创建自定义状态列，例如“测试中”或“验证中”")
@@ -257,6 +254,7 @@ private struct TaskColumnView: View {
                 Image(systemName: "plus")
             }
             .buttonStyle(BoardlyIconButtonStyle())
+            .boardlyControlFocus()
             .help("在“\(column.name)”列新建任务")
             .accessibilityLabel("在\(column.name)列新建任务")
 
@@ -278,9 +276,12 @@ private struct TaskColumnView: View {
                 .frame(width: 24, height: 20)
                 .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
+        // 使用普通按钮承载菜单，避免弹出式菜单为指示箭头预留非对称空间。
+        .menuStyle(.button)
+        .buttonStyle(BoardlyPlainButtonStyle())
         .menuIndicator(.hidden)
-        .focusEffectDisabled()
+        .frame(width: 24, height: 20)
+        .boardlyControlFocus()
         .help("\(column.name)列操作")
         .accessibilityLabel("\(column.name)列操作")
         .accessibilityHint("重命名、左移、右移或删除这一列")
@@ -326,6 +327,7 @@ private struct TaskColumnView: View {
                     .boardlyFont(.caption, weight: .medium)
             }
             .buttonStyle(BoardlySecondaryButtonStyle())
+            .boardlyControlFocus()
             .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)

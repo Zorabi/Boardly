@@ -77,6 +77,7 @@ struct NewColumnSheet: View {
                             }
                         }
                         .toggleStyle(.switch)
+                        .boardlyControlFocus()
                     }
                 }
                 .padding(.horizontal, 20)
@@ -90,9 +91,11 @@ struct NewColumnSheet: View {
                 Spacer()
                 Button("取消") { dismiss() }
                     .buttonStyle(BoardlySecondaryButtonStyle())
+                    .boardlyControlFocus()
                     .keyboardShortcut(.cancelAction)
                 Button("创建列") { createColumn() }
                     .buttonStyle(BoardlyPrimaryButtonStyle())
+                    .boardlyControlFocus()
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSubmit)
             }
@@ -130,6 +133,7 @@ struct NewColumnSheet: View {
         }
         .pickerStyle(.menu)
         .labelsHidden()
+        .boardlyControlFocus()
         .accessibilityHint("默认放在首个完成列之前")
     }
 
@@ -141,6 +145,7 @@ struct NewColumnSheet: View {
         }
         .pickerStyle(.menu)
         .labelsHidden()
+        .boardlyControlFocus()
     }
 
     private func colorSwatch(_ option: BoardlyTheme.ProjectColorOption) -> some View {
@@ -152,8 +157,10 @@ struct NewColumnSheet: View {
                     .fill(option.color)
                     .frame(width: 22, height: 22)
                 if colorName == option.name {
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.9), lineWidth: 2)
+                    Image(systemName: "checkmark")
+                        .boardlySystemFont(size: 11, weight: .bold)
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.7), radius: 1)
                         .frame(width: 22, height: 22)
                 }
             }
@@ -161,6 +168,7 @@ struct NewColumnSheet: View {
             .contentShape(Circle())
         }
         .buttonStyle(BoardlyPlainButtonStyle())
+        .boardlyControlFocus()
         .accessibilityLabel(option.title)
         .accessibilityAddTraits(colorName == option.name ? .isSelected : [])
     }
