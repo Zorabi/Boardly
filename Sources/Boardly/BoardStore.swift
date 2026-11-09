@@ -402,6 +402,26 @@ final class BoardStore: ObservableObject {
         persist()
     }
 
+    /// 侧边栏投放只修改分类或日期，保留任务状态与排序。
+    @discardableResult
+    func moveTask(id: BoardTask.ID, to scope: SidebarScope) -> Bool {
+        guard var task = task(withID: id) else { return false }
+        switch scope {
+        case .inbox:
+            task.projectID = nil
+        case .project(let projectID):
+            guard projects.contains(where: { $0.id == projectID }) else { return false }
+            task.projectID = projectID
+        case .today:
+            if let dueDate = task.dueDate, Calendar.current.isDateInToday(dueDate) { return true }
+            task.dueDate = Calendar.current.startOfDay(for: .now)
+        case .all:
+            return false
+        }
+        saveTask(task)
+        return true
+    }
+
     private func tasksByMoving(
         id: BoardTask.ID,
         to columnID: BoardColumn.ID,

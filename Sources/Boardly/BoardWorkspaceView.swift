@@ -60,6 +60,16 @@ struct BoardWorkspaceView: View {
     @EnvironmentObject private var store: BoardStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var searchText = ""
+    @State private var draggedTask: BoardTask?
+    @State private var directDragLocation: CGPoint?
+    @State private var dragPreviewSize = CGSize(width: 260, height: 80)
+    @State private var sidebarFrames: [SidebarScope: CGRect] = [:]
+
+    private var sidebarDropTarget: SidebarScope? {
+        guard draggedTask != nil, let directDragLocation else { return nil }
+        return SidebarDropResolver.target(at: directDragLocation, previewSize: dragPreviewSize, frames: sidebarFrames)
+    }
+
     @State private var newTaskContext: NewTaskContext?
     @State private var isInspectorPresented = false
     @State private var isSettingsPresented = false
@@ -74,17 +84,62 @@ struct BoardWorkspaceView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView()
+            SidebarView(dropTarget: sidebarDropTarget, isDraggingTask: draggedTask != nil)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
-            BoardView(searchText: searchText) { columnID in
-                newTaskContext = NewTaskContext(columnID: columnID)
-            }
+            BoardView(
+                searchText: searchText,
+                onCreateTask: { columnID in
+                    newTaskContext = NewTaskContext(columnID: columnID)
+                },
+                draggedTask: $draggedTask,
+                onSidebarDrop: { taskID, location in
+                    guard let scope = SidebarDropResolver.target(at: location, previewSize: dragPreviewSize, frames: sidebarFrames) else { return false }
+                    return store.moveTask(id: taskID, to: scope)
+                },
+                directDragLocation: $directDragLocation
+            )
             .navigationTitle(store.selectedScopeTitle)
             .overlay(alignment: .trailing) {
                 floatingInspector
             }
         }
+        .overlay(alignment: .topLeading) {
+            // 分栏由不同的原生容器承载；使用窗口全局坐标，再转换到预览层，
+            // 避免侧边栏宽度和标题栏高度造成鼠标与卡片的偏移。
+            GeometryReader { geometry in
+                if let draggedTask, let directDragLocation {
+                    let origin = geometry.frame(in: .global).origin
+                    TaskCardDragPreview(task: draggedTask)
+                        .background {
+                            GeometryReader { preview in
+                                Color.clear.preference(key: TaskDragPreviewSizeKey.self, value: preview.size)
+                            }
+                        }
+                        .opacity(sidebarDropTarget == nil ? 1 : 0.65)
+                        .overlay(alignment: .bottom) {
+                            if let target = sidebarDropTarget {
+                                Label(dropHint(for: target), systemImage: "checkmark.circle.fill")
+                                    .boardlyFont(.caption, weight: .semibold)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(BoardlyTheme.accent, in: Capsule())
+                                    .foregroundStyle(.white)
+                                    .fixedSize()
+                                    .offset(y: 32)
+                            }
+                        }
+                        .position(
+                            x: directDragLocation.x - origin.x,
+                            y: directDragLocation.y - origin.y
+                        )
+                        .shadow(color: .black.opacity(0.35), radius: 12, y: 8)
+                }
+            }
+            .allowsHitTesting(false)
+        }
+        .onPreferenceChange(TaskDragPreviewSizeKey.self) { dragPreviewSize = $0 }
+        .onPreferenceChange(SidebarDropFramePreferenceKey.self) { sidebarFrames = $0 }
         .searchable(text: $searchText, placement: .toolbar, prompt: "搜索任务")
         .toolbar {
             // macOS 会把 primaryAction 放在系统“收回侧边栏”按钮左侧，
@@ -122,6 +177,15 @@ struct BoardWorkspaceView: View {
             inspectedTaskID = selectedTaskID
             isSettingsPresented = false
             presentInspector()
+        }
+    }
+
+    private func dropHint(for scope: SidebarScope) -> String {
+        switch scope {
+        case .today: "设为今天"
+        case .inbox: "移至未分类"
+        case .project(let id): "移至“\(store.projects.first(where: { $0.id == id })?.name ?? "项目")”"
+        case .all: ""
         }
     }
 
@@ -240,5 +304,35 @@ struct BoardWorkspaceView: View {
                 description: Text("在看板中选择一张卡片以查看详情。")
             )
         }
+    }
+}
+
+private struct TaskDragPreviewSizeKey: PreferenceKey {
+    static let defaultValue = CGSize(width: 260, height: 80)
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
+    }
+}
+
+/// 高亮与释放共用落点规则，卡片接触目标即可接受，无需鼠标进入文字区域。
+enum SidebarDropResolver {
+    static func target(at point: CGPoint, previewSize: CGSize, frames: [SidebarScope: CGRect]) -> SidebarScope? {
+        let preview = CGRect(
+            x: point.x - previewSize.width / 2,
+            y: point.y - previewSize.height / 2,
+            width: previewSize.width,
+            height: previewSize.height
+        )
+        let candidates = frames.filter { scope, frame in
+            scope != .all && frame.insetBy(dx: -12, dy: -6).intersects(preview)
+        }
+        // 多行同时相交时选择离鼠标纵向最近的一行，避免字典遍历顺序影响落点。
+        return candidates.min { lhs, rhs in
+            let leftDistance = abs(lhs.value.midY - point.y)
+            let rightDistance = abs(rhs.value.midY - point.y)
+            if leftDistance != rightDistance { return leftDistance < rightDistance }
+            return lhs.value.minY < rhs.value.minY
+        }?.key
     }
 }

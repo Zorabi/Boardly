@@ -74,7 +74,7 @@ struct TaskCardView: View {
                 GeometryReader { geometry in
                     Color.clear.preference(
                         key: BoardlyTaskFramePreferenceKey.self,
-                        value: [task.id: geometry.frame(in: .named(BoardlyTheme.boardCoordinateSpace))]
+                        value: [task.id: geometry.frame(in: .global)]
                     )
                 }
             }
@@ -86,7 +86,7 @@ struct TaskCardView: View {
         // 不让拖动手势抢在点按手势前等待阈值，从而让详情面板立即响应。
         // 列/卡片仍保留 onDrop 作为系统拖放与辅助功能退路。
         .simultaneousGesture(
-            DragGesture(minimumDistance: 10, coordinateSpace: .named(BoardlyTheme.boardCoordinateSpace))
+            DragGesture(minimumDistance: 10, coordinateSpace: .global)
                 .onChanged { value in
                     let now = CACurrentMediaTime()
                     if directlyDraggedTaskID != task.id {

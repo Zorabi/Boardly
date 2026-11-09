@@ -1137,6 +1137,62 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(decoded, payload)
     }
 
+    func testSidebarDropAcceptsCardOverlapOutsidePointerAndChoosesNearestRow() {
+        let first = SidebarScope.project(UUID())
+        let second = SidebarScope.project(UUID())
+        let frames: [SidebarScope: CGRect] = [
+            first: CGRect(x: 20, y: 100, width: 180, height: 22),
+            second: CGRect(x: 20, y: 130, width: 180, height: 22)
+        ]
+        let size = CGSize(width: 260, height: 80)
+        XCTAssertEqual(SidebarDropResolver.target(at: CGPoint(x: 280, y: 110), previewSize: size, frames: frames), first)
+        XCTAssertEqual(SidebarDropResolver.target(at: CGPoint(x: 280, y: 139), previewSize: size, frames: frames), second)
+        XCTAssertNil(SidebarDropResolver.target(at: CGPoint(x: 400, y: 139), previewSize: size, frames: frames))
+        XCTAssertNil(SidebarDropResolver.target(at: CGPoint(x: 100, y: 250), previewSize: size, frames: frames))
+        XCTAssertNil(SidebarDropResolver.target(at: CGPoint(x: 100, y: 110), previewSize: size, frames: [.all: frames[first]!]))
+    }
+
+    func testSidebarDropChangesProjectWithoutChangingWorkflow() {
+        let source = Project(name: "来源", symbol: "folder", colorName: "blue")
+        let destination = Project(name: "目标", symbol: "folder", colorName: "green")
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let task = BoardTask(title: "任务", columnID: DefaultColumns.doneID, projectID: source.id, dueDate: date, sortOrder: 3)
+        let store = BoardStore(projects: [source, destination], tasks: [task])
+
+        XCTAssertTrue(store.moveTask(id: task.id, to: .project(destination.id)))
+        var expected = task
+        expected.projectID = destination.id
+        XCTAssertEqual(store.task(withID: task.id), expected)
+        XCTAssertTrue(store.moveTask(id: task.id, to: .inbox))
+        expected.projectID = nil
+        XCTAssertEqual(store.task(withID: task.id), expected)
+    }
+
+    func testSidebarTodayDropPreservesProjectAndExistingTodayTime() throws {
+        let project = Project(name: "项目", symbol: "folder", colorName: "blue")
+        let task = BoardTask(title: "任务", columnID: DefaultColumns.inProgressID, projectID: project.id)
+        let store = BoardStore(projects: [project], tasks: [task])
+        XCTAssertTrue(store.moveTask(id: task.id, to: .today))
+        let moved = try XCTUnwrap(store.task(withID: task.id))
+        XCTAssertTrue(Calendar.current.isDateInToday(try XCTUnwrap(moved.dueDate)))
+        XCTAssertEqual(moved.projectID, project.id)
+        XCTAssertEqual(moved.columnID, task.columnID)
+        var timed = moved
+        timed.dueDate = Date.now
+        store.saveTask(timed)
+        XCTAssertTrue(store.moveTask(id: task.id, to: .today))
+        XCTAssertEqual(store.task(withID: task.id), timed)
+    }
+
+    func testSidebarDropRejectsMissingTaskProjectAndAllTasks() {
+        let task = BoardTask(title: "任务", columnID: DefaultColumns.todoID)
+        let store = BoardStore(tasks: [task])
+        XCTAssertFalse(store.moveTask(id: UUID(), to: .inbox))
+        XCTAssertFalse(store.moveTask(id: task.id, to: .project(UUID())))
+        XCTAssertFalse(store.moveTask(id: task.id, to: .all))
+        XCTAssertEqual(store.task(withID: task.id), task)
+    }
+
     func testDropActionMovesTaskBeforeDestinationCard() {
         let first = BoardTask(title: "First", columnID: DefaultColumns.todoID, sortOrder: 0)
         let second = BoardTask(title: "Second", columnID: DefaultColumns.todoID, sortOrder: 1)

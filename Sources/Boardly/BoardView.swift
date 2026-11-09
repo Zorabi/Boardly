@@ -11,8 +11,9 @@ struct BoardView: View {
     @State private var columnFrames: [BoardColumn.ID: CGRect] = [:]
     @State private var taskFrames: [BoardTask.ID: CGRect] = [:]
     @State private var directlyDraggedTaskID: BoardTask.ID?
-    @State private var draggedTask: BoardTask?
-    @State private var directDragLocation: CGPoint?
+    @Binding var draggedTask: BoardTask?
+    let onSidebarDrop: (BoardTask.ID, CGPoint) -> Bool
+    @Binding var directDragLocation: CGPoint?
 
     private let boardPadding: CGFloat = 16
 
@@ -60,17 +61,7 @@ struct BoardView: View {
                         .boardlyScrollers()
                         .background(BoardlyTheme.canvas)
                     }
-
-                    if let draggedTask, let directDragLocation {
-                        TaskCardDragPreview(task: draggedTask)
-                            .position(directDragLocation)
-                            .allowsHitTesting(false)
-                            .transition(.opacity)
-                            .shadow(color: .black.opacity(0.35), radius: 12, y: 8)
-                            .zIndex(100)
-                    }
                 }
-                .coordinateSpace(name: BoardlyTheme.boardCoordinateSpace)
                 .onPreferenceChange(BoardlyColumnFramePreferenceKey.self) { columnFrames = $0 }
                 .onPreferenceChange(BoardlyTaskFramePreferenceKey.self) { taskFrames = $0 }
                 .sheet(isPresented: $isNewColumnPresented) {
@@ -95,6 +86,7 @@ struct BoardView: View {
 
     private func handleDirectDragEnded(taskID: BoardTask.ID, location: CGPoint) {
         defer { draggedTask = nil }
+        if onSidebarDrop(taskID, location) { return }
         guard let targetColumn = columnFrames
             .filter({ $0.value.contains(location) })
             .sorted(by: { $0.value.minX < $1.value.minX })
@@ -204,7 +196,7 @@ private struct TaskColumnView: View {
                 GeometryReader { geometry in
                     Color.clear.preference(
                         key: BoardlyColumnFramePreferenceKey.self,
-                        value: [column.id: geometry.frame(in: .named(BoardlyTheme.boardCoordinateSpace))]
+                        value: [column.id: geometry.frame(in: .global)]
                     )
                 }
             }
